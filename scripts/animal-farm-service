@@ -1,0 +1,13 @@
+#!/bin/zsh
+set -eu
+LABEL="com.pratik.animal-farm"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+DOMAIN="gui/$(id -u)"
+case "${1:-status}" in
+  start) launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || launchctl bootstrap "$DOMAIN" "$PLIST"; launchctl kickstart "$DOMAIN/$LABEL"; sleep 1; echo "Animal Farm is running at http://127.0.0.1:8002" ;;
+  stop) launchctl kill SIGTERM "$DOMAIN/$LABEL" 2>/dev/null || true; echo "Animal Farm stopped." ;;
+  restart) launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || launchctl bootstrap "$DOMAIN" "$PLIST"; launchctl kickstart -k "$DOMAIN/$LABEL"; sleep 1; echo "Animal Farm restarted at http://127.0.0.1:8002" ;;
+  status) launchctl print "$DOMAIN/$LABEL" ;;
+  logs) tail -f "/Users/gt/Developer/animal-farm/logs/stderr.log" ;;
+  *) echo "Usage: $0 {start|stop|restart|status|logs}"; exit 2 ;;
+esac

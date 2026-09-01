@@ -1,0 +1,22 @@
+.cargo-bay {
+  margin: 6px 0 26px;
+  padding: 20px;
+  border: 1px solid #d8e2ce;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #f5f8ef, #fffdf7);
+  box-shadow: inset 0 1px #fff;
+}
+
+.cargo-summary, .cargo-row, .cargo-send { display: flex; align-items: center; gap: 14px; }
+.cargo-summary { justify-content: space-between; padding: 0 4px 14px; }
+.cargo-summary > div, .cargo-row > div, .cargo-send > span { display: grid; flex: 1; }
+.cargo-summary small, .cargo-row small, .cargo-send small { color: var(--muted); }
+.cargo-row { padding: 14px 4px; border-top: 1px solid #e0e7d8; }
+.cargo-row > span { font-size: 1.8rem; }
+.cargo-send { justify-content: space-between; margin-top: 12px; padding: 16px; border-radius: 15px; background: #e6efdd; }
+.cargo-send button { padding: 13px 18px; }
+.delivery-history-title { margin: 8px 0 4px; color: #58734f; font-size: 1rem; }
+
+@media (max-width: 700px) {
+  .cargo-summary, .cargo-send { align-items: stretch; flex-direction: column; }
+}
