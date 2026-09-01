@@ -118,7 +118,11 @@ async def friendly_form_error(request: Request, exc: HTTPException):
     )
     if is_form:
         destination = "/admin" if request.url.path.startswith("/admin/") else "/"
-        if request.url.path.startswith("/animals/sell"):
+        if request.url.path.startswith("/market/fish-seed"):
+            open_dialog = "&open=market-dialog&market=fishery"
+        elif request.url.path.startswith("/ponds/"):
+            open_dialog = "&open=fishery-screen"
+        elif request.url.path.startswith("/animals/sell"):
             open_dialog = "&open=my-animals-screen"
         elif request.url.path.startswith("/inventory/"):
             open_dialog = "&open=inventory-screen"
@@ -160,7 +164,7 @@ def initialize_database() -> None:
             password_hash TEXT NOT NULL DEFAULT '',role TEXT NOT NULL DEFAULT 'user',auth_source TEXT NOT NULL DEFAULT 'animal_farm',
             farmies INTEGER NOT NULL DEFAULT 2000,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
         db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
-        settings = {'starting_farmies':'2000','farm_price':'1000','initial_land_blocks':'150','fixed_land_blocks':'30','inventory_blocks':'20','inventory_capacity':'100','bicycle_capacity':'50','bicycle_seconds':'3600','xp_sales_rate':'10','xp_development_rate':'20','capacity_per_land':'5','land_50_price':'1200','land_100_price':'2600','land_250_price':'7500'}
+        settings = {'starting_farmies':'2000','farm_price':'1000','initial_land_blocks':'150','fixed_land_blocks':'30','inventory_blocks':'20','inventory_capacity':'100','bicycle_capacity':'50','bicycle_seconds':'3600','xp_sales_rate':'10','xp_development_rate':'20','fishery_sales_xp_enabled':'1','fishery_development_xp_enabled':'1','capacity_per_land':'5','land_50_price':'1200','land_100_price':'2600','land_250_price':'7500'}
         db.executemany("INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)", settings.items())
         db.execute("""CREATE TABLE IF NOT EXISTS farms(
             user_id INTEGER PRIMARY KEY,name TEXT NOT NULL DEFAULT '',owned INTEGER NOT NULL DEFAULT 0,total_blocks INTEGER NOT NULL DEFAULT 150,
@@ -262,6 +266,42 @@ def initialize_database() -> None:
         db.execute("UPDATE upgrade_catalog SET name='Bike' WHERE upgrade_key='transport_2' AND name='Bicycle Level 2'")
         db.execute("""CREATE TABLE IF NOT EXISTS user_upgrades(user_id INTEGER NOT NULL,upgrade_key TEXT NOT NULL,purchased_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(user_id,upgrade_key))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS fish_species(
+            fish_key TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,product_key TEXT NOT NULL UNIQUE,
+            product_name TEXT NOT NULL,product_icon TEXT NOT NULL,product_size REAL NOT NULL,sale_price INTEGER NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS fish_seeds(
+            seed_key TEXT PRIMARY KEY,fish_key TEXT NOT NULL,name TEXT NOT NULL,icon TEXT NOT NULL,
+            pack_size REAL NOT NULL,pack_price INTEGER NOT NULL,seeds_per_sack INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS pond_catalog(
+            pond_level INTEGER PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,required_player_level INTEGER NOT NULL,
+            cost INTEGER NOT NULL,land_blocks INTEGER NOT NULL,sack_capacity INTEGER NOT NULL,fish_per_sack INTEGER NOT NULL,
+            growth_seconds INTEGER NOT NULL,fish_key TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS user_ponds(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,name TEXT NOT NULL,pond_level INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'idle',stocked_sacks INTEGER NOT NULL DEFAULT 0,cycle_started_at TEXT,ready_at TEXT,
+            ready_fish INTEGER NOT NULL DEFAULT 0,lifetime_harvest INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        db.execute("CREATE INDEX IF NOT EXISTS user_ponds_user ON user_ponds(user_id,id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS pond_cycles(
+            id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,pond_id INTEGER NOT NULL,pond_level INTEGER NOT NULL,
+            sacks INTEGER NOT NULL,fish_count INTEGER NOT NULL,fish_key TEXT NOT NULL,started_at TEXT NOT NULL,
+            ready_at TEXT NOT NULL,harvested_at TEXT,status TEXT NOT NULL DEFAULT 'growing')""")
+        db.execute("CREATE INDEX IF NOT EXISTS pond_cycles_user_pond ON pond_cycles(user_id,pond_id,started_at DESC)")
+        db.execute("CREATE INDEX IF NOT EXISTS pond_cycles_status_ready ON pond_cycles(status,ready_at)")
+        db.execute("""CREATE TABLE IF NOT EXISTS pond_upgrade_history(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,pond_id INTEGER NOT NULL,from_level INTEGER,
+            to_level INTEGER NOT NULL,cost INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS pond_limits(
+            player_level INTEGER PRIMARY KEY,max_ponds INTEGER NOT NULL CHECK(max_ponds>=0),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        db.executemany("INSERT OR IGNORE INTO pond_limits(player_level,max_ponds) VALUES (?,?)",[(1,0),(2,1),(3,2)])
+        db.execute("""INSERT OR IGNORE INTO fish_species VALUES
+            ('carp','Carp','🐟','carp_fish','Carp fish','🐟',1,10,1)""")
+        db.execute("""INSERT OR IGNORE INTO fish_seeds VALUES
+            ('carp_seed','carp','Carp seed sack','🫘',0.5,100,100,1)""")
+        db.executemany("INSERT OR IGNORE INTO pond_catalog VALUES (?,?,?,?,?,?,?,?,?,?,1)", [
+            (1,'Starter Pond','💧',2,2000,20,1,100,86400,'carp'),
+            (2,'Growing Pond','🌊',3,5000,40,2,100,86400,'carp')])
         for user in db.execute("SELECT id FROM users").fetchall():
             db.execute("INSERT OR IGNORE INTO xp_wallets(user_id) VALUES (?)", (user['id'],))
         backfill_xp(db)
@@ -352,8 +392,15 @@ def sync_world(db: sqlite3.Connection, user_id: int) -> None:
     ready = db.execute("SELECT * FROM deliveries WHERE user_id=? AND status='travelling' AND arrives_at<=?", (user_id, current.isoformat())).fetchall()
     for delivery in ready:
         transact(db, user_id, delivery["revenue"], f"delivery:{delivery['id']}", f"Market sale: {delivery['quantity']} {delivery['product_key']}", {"delivery_id": delivery["id"]})
-        grant_xp_for_farmies(db,user_id,f"delivery:{delivery['id']}",'sales',delivery['revenue'],f"Sold {delivery['quantity']} {delivery['product_key']}")
+        is_fish = db.execute("SELECT 1 FROM fish_species WHERE product_key=?",(delivery['product_key'],)).fetchone()
+        if not is_fish or setting(db,'fishery_sales_xp_enabled'):
+            grant_xp_for_farmies(db,user_id,f"delivery:{delivery['id']}",'sales',delivery['revenue'],f"Sold {delivery['quantity']} {delivery['product_key']}")
         db.execute("UPDATE deliveries SET status='sold',settled_at=? WHERE id=?", (current.isoformat(), delivery["id"]))
+    db.execute("""UPDATE user_ponds SET status='ready',ready_fish=(
+            SELECT c.fish_count FROM pond_cycles c WHERE c.id=(
+                SELECT id FROM pond_cycles WHERE pond_id=user_ponds.id AND user_id=? AND status='growing' ORDER BY started_at DESC LIMIT 1))
+        WHERE user_id=? AND status='growing' AND ready_at<=?""", (user_id, user_id, current.isoformat()))
+    db.execute("UPDATE pond_cycles SET status='ready' WHERE user_id=? AND status='growing' AND ready_at<=?", (user_id,current.isoformat()))
 
 
 def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
@@ -387,15 +434,34 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     for feed in feeds:
         inventory.append({"product_key": feed["feed_key"], "product_name": feed["name"], "product_icon": feed["icon"],
             "product_size": feed["pack_size"], "product_price": None, "quantity": feed["quantity"], "is_feed": True})
+    fish_species = [dict(row) for row in db.execute("SELECT * FROM fish_species WHERE enabled=1 ORDER BY name")]
+    fish_seeds = [dict(row) for row in db.execute("SELECT * FROM fish_seeds WHERE enabled=1 ORDER BY name")]
+    for fish in fish_species:
+        fish["quantity"] = (db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(user_id,fish["product_key"])).fetchone() or {"quantity":0})["quantity"]
+        inventory.append({"product_key":fish["product_key"],"product_name":fish["product_name"],"product_icon":fish["product_icon"],
+            "product_size":fish["product_size"],"product_price":fish["sale_price"],"quantity":fish["quantity"],"is_feed":False})
+    for seed in fish_seeds:
+        seed["quantity"] = (db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(user_id,seed["seed_key"])).fetchone() or {"quantity":0})["quantity"]
+        inventory.append({"product_key":seed["seed_key"],"product_name":seed["name"],"product_icon":seed["icon"],
+            "product_size":seed["pack_size"],"product_price":None,"quantity":seed["quantity"],"is_feed":True})
     animal_land = sum(item["quantity"] * item["land_blocks"] for item in species)
+    ponds = [dict(row) for row in db.execute("""SELECT p.*,c.name level_name,c.icon,c.land_blocks,c.sack_capacity,c.fish_per_sack,c.growth_seconds,
+        c.fish_key,f.name fish_name,f.product_icon,s.seed_key,s.name seed_name,COALESCE(i.quantity,0) seed_quantity
+        FROM user_ponds p JOIN pond_catalog c ON c.pond_level=p.pond_level JOIN fish_species f ON f.fish_key=c.fish_key
+        LEFT JOIN fish_seeds s ON s.fish_key=c.fish_key AND s.enabled=1 LEFT JOIN inventory i ON i.user_id=p.user_id AND i.product_key=s.seed_key
+        WHERE p.user_id=? ORDER BY p.id""",(user_id,))]
+    pond_land = sum(pond["land_blocks"] for pond in ponds)
     inventory_used = sum(item["quantity"] * item["product_size"] for item in inventory)
     inventory_items = [item for item in inventory if item["quantity"] > 0]
     owned_species = [item for item in species if item["quantity"] > 0]
     deliveries = [dict(row) for row in db.execute("SELECT * FROM deliveries WHERE user_id=? ORDER BY started_at DESC LIMIT 10", (user_id,))]
     transport_busy = any(delivery["status"] == "travelling" for delivery in deliveries)
-    cargo = [dict(row) for row in db.execute("""SELECT c.product_key,c.quantity,c.loaded_at,s.product_name,s.product_icon,s.product_size,s.product_price,
-        c.quantity*s.product_size capacity_used,c.quantity*s.product_price revenue
-        FROM transport_cargo c JOIN species s ON s.product_key=c.product_key WHERE c.user_id=? ORDER BY c.loaded_at,c.product_key""", (user_id,))]
+    cargo = [dict(row) for row in db.execute("""WITH products AS (
+        SELECT product_key,product_name,product_icon,product_size,product_price FROM species
+        UNION ALL SELECT product_key,product_name,product_icon,product_size,sale_price FROM fish_species)
+        SELECT c.product_key,c.quantity,c.loaded_at,p.product_name,p.product_icon,p.product_size,p.product_price,
+        c.quantity*p.product_size capacity_used,c.quantity*p.product_price revenue
+        FROM transport_cargo c JOIN products p ON p.product_key=c.product_key WHERE c.user_id=? ORDER BY c.loaded_at,c.product_key""", (user_id,))]
     cargo_capacity = sum(item["capacity_used"] for item in cargo)
     cargo_revenue = sum(item["revenue"] for item in cargo)
     ledger = [dict(row) for row in db.execute("SELECT * FROM farmies_ledger WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,))]
@@ -410,6 +476,8 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     wallet['progress_percent'] = 100 if not next_level else max(0,min(100,round((wallet['total_xp']-(current_level['xp_required'] if current_level else 0))*100/max(1,next_level['xp_required']-(current_level['xp_required'] if current_level else 0)))))
     wallet['next_unlocks'] = [] if not next_level else [row[0] for row in db.execute("""SELECT name FROM species WHERE required_level=? UNION ALL
         SELECT name FROM upgrade_catalog WHERE required_player_level=? AND enabled=1 ORDER BY name""",(next_level['level'],next_level['level'])).fetchall()]
+    pond_limit_row = db.execute("SELECT max_ponds FROM pond_limits WHERE player_level<=? ORDER BY player_level DESC LIMIT 1",(wallet['highest_level'],)).fetchone()
+    pond_limit = pond_limit_row['max_ponds'] if pond_limit_row else 0
     upgrades = [dict(row) for row in db.execute("""SELECT c.*,CASE WHEN u.upgrade_key IS NULL THEN 0 ELSE 1 END purchased
         FROM upgrade_catalog c LEFT JOIN user_upgrades u ON u.upgrade_key=c.upgrade_key AND u.user_id=? WHERE c.enabled=1 ORDER BY c.upgrade_type,c.upgrade_level""",(user_id,))]
     current_transport = db.execute("SELECT name FROM upgrade_catalog WHERE upgrade_type='transport' AND upgrade_level=?",(farm['transport_level'],)).fetchone()
@@ -418,11 +486,13 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     game_settings['bicycle_capacity'] = farm['transport_capacity']; game_settings['bicycle_seconds'] = farm['transport_seconds']
     return {"farm": dict(farm), "user": dict(user), "species": species, "owned_species": owned_species, "inventory": inventory,
             "inventory_items": inventory_items, "animal_land": animal_land,
-            "land_available": farm["total_blocks"] - farm["fixed_blocks"] - farm["inventory_blocks"] - animal_land,
+            "land_available": farm["total_blocks"] - farm["fixed_blocks"] - farm["inventory_blocks"] - animal_land - pond_land,
             "inventory_used": inventory_used, "deliveries": deliveries, "transport_busy": transport_busy,
             "cargo": cargo, "cargo_capacity": cargo_capacity, "cargo_revenue": cargo_revenue,
             "ledger": ledger, "expansions": expansions,
-            "feeds": feeds, "settings": game_settings, "xp": wallet, "upgrades": upgrades, "transport_name":transport_name,"transport_icon":transport_icon,"now_iso": current.isoformat()}
+            "feeds": feeds, "fish_species":fish_species,"fish_seeds":fish_seeds,"ponds":ponds,"pond_land":pond_land,"pond_limit":pond_limit,
+            "pond_catalog":[dict(row) for row in db.execute("SELECT * FROM pond_catalog WHERE enabled=1 ORDER BY pond_level")],
+            "settings": game_settings, "xp": wallet, "upgrades": upgrades, "transport_name":transport_name,"transport_icon":transport_icon,"now_iso": current.isoformat()}
 
 
 @app.middleware("http")
@@ -666,6 +736,99 @@ def collect_product(request: Request, species_key: str = Form(...)):
     return RedirectResponse("/", 303)
 
 
+@app.post("/market/fish-seed/buy")
+def buy_fish_seed(request: Request, seed_key: str = Form(...), quantity: int = Form(...)):
+    uid=user_id(request)
+    if quantity<1 or quantity>1000: raise HTTPException(400,"Choose a valid sack quantity.")
+    with connection() as db:
+        state=snapshot(db,uid); seed=db.execute("SELECT * FROM fish_seeds WHERE seed_key=? AND enabled=1",(seed_key,)).fetchone()
+        if not seed: raise HTTPException(404,"Fish seed not found.")
+        if seed['pack_size']*quantity > state['farm']['inventory_capacity']-state['inventory_used']+1e-9: raise HTTPException(400,"Not enough inventory capacity.")
+        transact(db,uid,-seed['pack_price']*quantity,f"fish-seed:{uuid.uuid4().hex}",f"Purchased {quantity} {seed['name']} sacks")
+        db.execute("""INSERT INTO inventory(user_id,product_key,quantity) VALUES (?,?,?)
+            ON CONFLICT(user_id,product_key) DO UPDATE SET quantity=quantity+excluded.quantity""",(uid,seed_key,quantity))
+    return RedirectResponse("/?open=market-dialog&market=fishery",303)
+
+
+@app.post("/ponds/buy")
+def buy_pond(request: Request, pond_level: int=Form(...), pond_name: str=Form(...)):
+    uid=user_id(request); clean_name=" ".join(pond_name.split())[:60]
+    if len(clean_name)<2: raise HTTPException(400,"Give the pond a name.")
+    with connection() as db:
+        state=snapshot(db,uid); catalog=db.execute("SELECT * FROM pond_catalog WHERE pond_level=? AND enabled=1",(pond_level,)).fetchone()
+        first=db.execute("SELECT MIN(pond_level) FROM pond_catalog WHERE enabled=1").fetchone()[0]
+        if not catalog or pond_level!=first: raise HTTPException(400,"New ponds must start at the first enabled pond level.")
+        if state['xp']['highest_level']<catalog['required_player_level']: raise HTTPException(403,f"Reach Level {catalog['required_player_level']} to build this pond.")
+        if len(state['ponds'])>=state['pond_limit']: raise HTTPException(403,f"Your current player level allows {state['pond_limit']} pond{'s' if state['pond_limit'] != 1 else ''}.")
+        if catalog['land_blocks']>state['land_available']: raise HTTPException(400,f"You need {catalog['land_blocks']} free land blocks.")
+        event=f"pond:{uuid.uuid4().hex}"; transact(db,uid,-catalog['cost'],event,f"Built {clean_name}")
+        if setting(db,'fishery_development_xp_enabled'):
+            grant_xp_for_farmies(db,uid,event,'development',catalog['cost'],f"Built {clean_name}")
+        pond_id=db.execute("INSERT INTO user_ponds(user_id,name,pond_level) VALUES (?,?,?)",(uid,clean_name,pond_level)).lastrowid
+        db.execute("INSERT INTO pond_upgrade_history(user_id,pond_id,from_level,to_level,cost) VALUES (?,?,NULL,?,?)",(uid,pond_id,pond_level,catalog['cost']))
+    return RedirectResponse("/?open=fishery-screen",303)
+
+
+@app.post("/ponds/{pond_id}/stock")
+def stock_pond(request: Request, pond_id: int, sacks: int=Form(...)):
+    uid=user_id(request)
+    with connection() as db:
+        sync_world(db,uid); pond=db.execute("""SELECT p.*,c.sack_capacity,c.fish_per_sack,c.growth_seconds,c.fish_key,s.seed_key
+            FROM user_ponds p JOIN pond_catalog c ON c.pond_level=p.pond_level JOIN fish_seeds s ON s.fish_key=c.fish_key AND s.enabled=1
+            WHERE p.id=? AND p.user_id=?""",(pond_id,uid)).fetchone()
+        if not pond: raise HTTPException(404,"Pond not found.")
+        if pond['status']!='idle': raise HTTPException(409,"Harvest the current pond cycle before stocking again.")
+        if sacks<1 or sacks>pond['sack_capacity']: raise HTTPException(400,f"This pond accepts 1 to {pond['sack_capacity']} sacks.")
+        stock=db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(uid,pond['seed_key'])).fetchone()
+        if not stock or stock['quantity']<sacks: raise HTTPException(400,"Not enough fish-seed sacks in inventory.")
+        started=now(); ready=started+timedelta(seconds=pond['growth_seconds']); fish_count=sacks*pond['fish_per_sack']; cycle_id=uuid.uuid4().hex
+        db.execute("UPDATE inventory SET quantity=quantity-? WHERE user_id=? AND product_key=?",(sacks,uid,pond['seed_key']))
+        db.execute("UPDATE user_ponds SET status='growing',stocked_sacks=?,cycle_started_at=?,ready_at=?,ready_fish=0 WHERE id=? AND user_id=?",(sacks,started.isoformat(),ready.isoformat(),pond_id,uid))
+        db.execute("INSERT INTO pond_cycles VALUES (?,?,?,?,?,?,?,?,?,NULL,'growing')",(cycle_id,uid,pond_id,pond['pond_level'],sacks,fish_count,pond['fish_key'],started.isoformat(),ready.isoformat()))
+    return RedirectResponse("/?open=fishery-screen",303)
+
+
+@app.post("/ponds/{pond_id}/harvest")
+def harvest_pond(request: Request, pond_id: int):
+    uid=user_id(request)
+    with connection() as db:
+        state=snapshot(db,uid); pond=db.execute("""SELECT p.*,cyc.id AS cycle_id,cyc.fish_count AS cycle_fish_count,
+            f.product_key,f.product_name,f.product_size FROM user_ponds p
+            JOIN pond_cycles cyc ON cyc.pond_id=p.id AND cyc.user_id=p.user_id AND cyc.status='ready'
+            JOIN fish_species f ON f.fish_key=cyc.fish_key
+            WHERE p.id=? AND p.user_id=? ORDER BY cyc.started_at DESC LIMIT 1""",(pond_id,uid)).fetchone()
+        if not pond or pond['status']!='ready' or pond['ready_fish']<1: raise HTTPException(400,"Fish are not ready to harvest.")
+        harvested=pond['cycle_fish_count']
+        if harvested*pond['product_size']>state['farm']['inventory_capacity']-state['inventory_used']+1e-9: raise HTTPException(400,"Inventory does not have enough room for this harvest.")
+        db.execute("""INSERT INTO inventory(user_id,product_key,quantity) VALUES (?,?,?)
+            ON CONFLICT(user_id,product_key) DO UPDATE SET quantity=quantity+excluded.quantity""",(uid,pond['product_key'],harvested))
+        stamp=now().isoformat()
+        db.execute("UPDATE user_ponds SET status='idle',stocked_sacks=0,cycle_started_at=NULL,ready_at=NULL,ready_fish=0,lifetime_harvest=lifetime_harvest+? WHERE id=? AND user_id=?",(harvested,pond_id,uid))
+        db.execute("UPDATE pond_cycles SET status='harvested',harvested_at=? WHERE id=? AND user_id=?",(stamp,pond['cycle_id'],uid))
+    return RedirectResponse("/?open=fishery-screen",303)
+
+
+@app.post("/ponds/{pond_id}/upgrade")
+def upgrade_pond(request: Request, pond_id: int):
+    uid=user_id(request)
+    with connection() as db:
+        state=snapshot(db,uid); pond=db.execute("SELECT * FROM user_ponds WHERE id=? AND user_id=?",(pond_id,uid)).fetchone()
+        if not pond: raise HTTPException(404,"Pond not found.")
+        if pond['status']!='idle': raise HTTPException(409,"Finish and harvest the active cycle before upgrading.")
+        current=db.execute("SELECT * FROM pond_catalog WHERE pond_level=?",(pond['pond_level'],)).fetchone()
+        target=db.execute("SELECT * FROM pond_catalog WHERE enabled=1 AND pond_level>? ORDER BY pond_level LIMIT 1",(pond['pond_level'],)).fetchone()
+        if not target: raise HTTPException(400,"No higher pond level is available.")
+        if state['xp']['highest_level']<target['required_player_level']: raise HTTPException(403,f"Reach Level {target['required_player_level']} first.")
+        extra=max(0,target['land_blocks']-current['land_blocks'])
+        if extra>state['land_available']: raise HTTPException(400,f"You need {extra} additional free land blocks.")
+        event=f"pond-upgrade:{pond_id}:{target['pond_level']}"; transact(db,uid,-target['cost'],event,f"Upgraded {pond['name']} to {target['name']}")
+        if setting(db,'fishery_development_xp_enabled'):
+            grant_xp_for_farmies(db,uid,event,'development',target['cost'],f"Upgraded {pond['name']}")
+        db.execute("UPDATE user_ponds SET pond_level=? WHERE id=? AND user_id=?",(target['pond_level'],pond_id,uid))
+        db.execute("INSERT INTO pond_upgrade_history(user_id,pond_id,from_level,to_level,cost) VALUES (?,?,?,?,?)",(uid,pond_id,pond['pond_level'],target['pond_level'],target['cost']))
+    return RedirectResponse("/?open=fishery-screen",303)
+
+
 @app.post("/transport/load")
 def load_transport(request: Request, product_key: str = Form(...), quantity: int = Form(...)):
     uid = user_id(request)
@@ -674,11 +837,12 @@ def load_transport(request: Request, product_key: str = Form(...), quantity: int
         sync_world(db, uid)
         if db.execute("SELECT 1 FROM deliveries WHERE user_id=? AND status='travelling' LIMIT 1", (uid,)).fetchone():
             raise HTTPException(409, "The bicycle is currently delivering goods.")
-        product = db.execute("SELECT product_key,product_name,product_size,product_price FROM species WHERE product_key=? GROUP BY product_key", (product_key,)).fetchone()
+        product = db.execute("""SELECT product_key,product_name,product_size,product_price FROM species WHERE product_key=?
+            UNION ALL SELECT product_key,product_name,product_size,sale_price FROM fish_species WHERE product_key=? LIMIT 1""", (product_key,product_key)).fetchone()
         stock = db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?", (uid, product_key)).fetchone()
         if not product or not stock or stock["quantity"] < quantity: raise HTTPException(400, "Not enough inventory.")
-        loaded_capacity = db.execute("""SELECT COALESCE(SUM(c.quantity*s.product_size),0) total
-            FROM transport_cargo c JOIN species s ON s.product_key=c.product_key WHERE c.user_id=?""", (uid,)).fetchone()["total"]
+        loaded_capacity = db.execute("""WITH products AS (SELECT product_key,product_size FROM species UNION ALL SELECT product_key,product_size FROM fish_species)
+            SELECT COALESCE(SUM(c.quantity*p.product_size),0) total FROM transport_cargo c JOIN products p ON p.product_key=c.product_key WHERE c.user_id=?""", (uid,)).fetchone()["total"]
         capacity = product["product_size"] * quantity
         max_capacity = db.execute("SELECT transport_capacity FROM farms WHERE user_id=?",(uid,)).fetchone()[0]
         if loaded_capacity + capacity > max_capacity + 1e-9: raise HTTPException(400, f"Only {max_capacity - loaded_capacity:g} bicycle-capacity blocks remain.")
@@ -705,8 +869,12 @@ def discard_inventory(request: Request, product_key: str = Form(...), quantity: 
             """SELECT product_name AS name FROM species WHERE product_key=?
                UNION ALL
                SELECT name FROM feeds WHERE feed_key=?
+               UNION ALL
+               SELECT product_name FROM fish_species WHERE product_key=?
+               UNION ALL
+               SELECT name FROM fish_seeds WHERE seed_key=?
                LIMIT 1""",
-            (product_key, product_key),
+            (product_key, product_key, product_key, product_key),
         ).fetchone()
         if not item:
             raise HTTPException(404, "Inventory item not found.")
@@ -750,8 +918,10 @@ def send_transport(request: Request):
         sync_world(db, uid)
         if db.execute("SELECT 1 FROM deliveries WHERE user_id=? AND status='travelling' LIMIT 1", (uid,)).fetchone():
             raise HTTPException(409, "The bicycle is currently delivering goods.")
-        cargo = db.execute("""SELECT c.product_key,c.quantity,s.product_size,s.product_price
-            FROM transport_cargo c JOIN species s ON s.product_key=c.product_key WHERE c.user_id=?""", (uid,)).fetchall()
+        cargo = db.execute("""WITH products AS (SELECT product_key,product_size,product_price FROM species
+            UNION ALL SELECT product_key,product_size,sale_price FROM fish_species)
+            SELECT c.product_key,c.quantity,p.product_size,p.product_price
+            FROM transport_cargo c JOIN products p ON p.product_key=c.product_key WHERE c.user_id=?""", (uid,)).fetchall()
         if not cargo: raise HTTPException(400, "Load goods before sending the bicycle.")
         capacity = sum(item["quantity"] * item["product_size"] for item in cargo)
         farm_transport = db.execute("SELECT transport_capacity,transport_seconds FROM farms WHERE user_id=?",(uid,)).fetchone()
@@ -815,16 +985,40 @@ def admin_page(request: Request, error: str = ""):
         users = [dict(row) for row in db.execute("""SELECT u.id,u.email,u.name,u.role,u.auth_source,u.farmies,COALESCE(x.total_xp,0) total_xp,COALESCE(x.highest_level,1) highest_level
             FROM users u LEFT JOIN xp_wallets x ON x.user_id=u.id ORDER BY u.id""")]
         xp_history=[dict(row) for row in db.execute("""SELECT x.*,u.name FROM xp_ledger x JOIN users u ON u.id=x.user_id ORDER BY x.id DESC LIMIT 100""")]
-    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"identity": request.state.identity, "error": error})
+        fish_species=[dict(row) for row in db.execute("SELECT * FROM fish_species ORDER BY name")]
+        fish_seeds=[dict(row) for row in db.execute("SELECT * FROM fish_seeds ORDER BY name")]
+        pond_catalog=[dict(row) for row in db.execute("SELECT * FROM pond_catalog ORDER BY pond_level")]
+        pond_limits=[dict(row) for row in db.execute("""SELECT l.level,l.name,COALESCE(p.max_ponds,0) max_ponds
+            FROM levels l LEFT JOIN pond_limits p ON p.player_level=l.level ORDER BY l.level""")]
+        user_ponds=[dict(row) for row in db.execute("""SELECT p.id,p.name pond_name,p.status,p.pond_level,p.stocked_sacks,p.ready_fish,
+            p.lifetime_harvest,p.created_at,u.name farmer_name,u.email,c.name level_name
+            FROM user_ponds p JOIN users u ON u.id=p.user_id JOIN pond_catalog c ON c.pond_level=p.pond_level
+            ORDER BY p.id DESC LIMIT 200""")]
+        pond_cycles=[dict(row) for row in db.execute("""SELECT x.id,x.status,x.sacks,x.fish_count,x.started_at,x.ready_at,x.harvested_at,
+            p.name pond_name,u.name farmer_name,f.name fish_name
+            FROM pond_cycles x JOIN user_ponds p ON p.id=x.pond_id JOIN users u ON u.id=x.user_id
+            JOIN fish_species f ON f.fish_key=x.fish_key ORDER BY x.started_at DESC LIMIT 200""")]
+    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"fish_species":fish_species,"fish_seeds":fish_seeds,"pond_catalog":pond_catalog,"pond_limits":pond_limits,"user_ponds":user_ponds,"pond_cycles":pond_cycles,"identity": request.state.identity, "error": error})
 
 
 @app.post("/admin/settings")
 def admin_setting(request: Request, key: str = Form(...), value: str = Form(...)):
     require_admin(request)
-    allowed = {'starting_farmies','farm_price','initial_land_blocks','fixed_land_blocks','inventory_blocks','inventory_capacity','bicycle_capacity','bicycle_seconds','xp_sales_rate','xp_development_rate','capacity_per_land'}
+    allowed = {'starting_farmies','farm_price','initial_land_blocks','fixed_land_blocks','inventory_blocks','inventory_capacity','bicycle_capacity','bicycle_seconds','xp_sales_rate','xp_development_rate','fishery_sales_xp_enabled','fishery_development_xp_enabled','capacity_per_land'}
     if key not in allowed or float(value) < 0 or (key in {'xp_sales_rate','xp_development_rate','capacity_per_land'} and float(value)<=0): raise HTTPException(400, "Invalid setting.")
     with connection() as db: db.execute("UPDATE settings SET value=?,updated_at=CURRENT_TIMESTAMP WHERE key=?", (value, key))
     return RedirectResponse("/admin", 303)
+
+
+@app.post("/admin/fish/pond-limits/{player_level}")
+def admin_pond_limit(request: Request, player_level: int, max_ponds: int=Form(...)):
+    require_admin(request)
+    if max_ponds<0: raise HTTPException(400,"Pond limit cannot be negative.")
+    with connection() as db:
+        if not db.execute("SELECT 1 FROM levels WHERE level=?",(player_level,)).fetchone(): raise HTTPException(404,"Player level not found.")
+        db.execute("""INSERT INTO pond_limits(player_level,max_ponds) VALUES (?,?)
+            ON CONFLICT(player_level) DO UPDATE SET max_ponds=excluded.max_ponds,updated_at=CURRENT_TIMESTAMP""",(player_level,max_ponds))
+    return RedirectResponse('/admin#fishery',303)
 
 
 @app.post("/admin/levels/save")
@@ -946,3 +1140,84 @@ def create_species(request: Request, name: str = Form(...), icon: str = Form("�
             (species_key,clean_name,icon.strip()[:12] or "🐾",land_blocks,buy_price,sell_price,product_key,clean_product,product_icon.strip()[:12] or "📦",
              product_size,product_price,production_minutes*60,1,feed_hours,feed_key,required_level))
     return RedirectResponse("/admin", 303)
+
+
+@app.post("/admin/fish/species/create")
+def create_fish_species(request: Request, name: str=Form(...), icon: str=Form("🐟"), product_name: str=Form(...),
+    product_icon: str=Form("🐟"), product_size: float=Form(...), sale_price: int=Form(...)):
+    require_admin(request); clean=" ".join(name.split()); product=" ".join(product_name.split())
+    if len(clean)<2 or len(product)<2 or product_size<=0 or sale_price<1: raise HTTPException(400,"Enter valid fish details.")
+    fish_key=catalog_key(clean); product_key=catalog_key(product)
+    with connection() as db:
+        try: db.execute("INSERT INTO fish_species VALUES (?,?,?,?,?,?,?,?,1)",(fish_key,clean,icon.strip()[:12] or '🐟',product_key,product,product_icon.strip()[:12] or '🐟',product_size,sale_price))
+        except sqlite3.IntegrityError: raise HTTPException(409,"That fish or product already exists.")
+    return RedirectResponse('/admin#fishery',303)
+
+
+@app.post("/admin/fish/seeds/create")
+def create_fish_seed(request: Request, fish_key: str=Form(...), name: str=Form(...), icon: str=Form("🫘"),
+    pack_size: float=Form(...), pack_price: int=Form(...), seeds_per_sack: int=Form(...)):
+    require_admin(request); clean=" ".join(name.split())
+    if len(clean)<2 or pack_size<=0 or pack_price<0 or seeds_per_sack<1: raise HTTPException(400,"Enter valid seed-sack details.")
+    seed_key=catalog_key(clean)
+    with connection() as db:
+        if not db.execute("SELECT 1 FROM fish_species WHERE fish_key=?",(fish_key,)).fetchone(): raise HTTPException(400,"Fish species not found.")
+        try: db.execute("INSERT INTO fish_seeds VALUES (?,?,?,?,?,?,?,1)",(seed_key,fish_key,clean,icon.strip()[:12] or '🫘',pack_size,pack_price,seeds_per_sack))
+        except sqlite3.IntegrityError: raise HTTPException(409,"That seed product already exists.")
+    return RedirectResponse('/admin#fishery',303)
+
+
+@app.post("/admin/fish/ponds/create")
+def create_pond_level(request: Request, pond_level: int=Form(...), name: str=Form(...), icon: str=Form("💧"),
+    required_player_level: int=Form(...), cost: int=Form(...), land_blocks: int=Form(...), sack_capacity: int=Form(...),
+    fish_per_sack: int=Form(...), growth_hours: int=Form(...), fish_key: str=Form(...)):
+    require_admin(request); clean=" ".join(name.split())
+    if pond_level<1 or len(clean)<2 or min(cost,land_blocks,sack_capacity,fish_per_sack,growth_hours)<1: raise HTTPException(400,"Enter valid pond-level details.")
+    with connection() as db:
+        if not db.execute("SELECT 1 FROM levels WHERE level=? AND enabled=1",(required_player_level,)).fetchone(): raise HTTPException(400,"Choose an enabled player level.")
+        if not db.execute("SELECT 1 FROM fish_species WHERE fish_key=? AND enabled=1",(fish_key,)).fetchone(): raise HTTPException(400,"Choose an enabled fish species.")
+        try: db.execute("INSERT INTO pond_catalog VALUES (?,?,?,?,?,?,?,?,?,?,1)",(pond_level,clean,icon.strip()[:12] or '💧',required_player_level,cost,land_blocks,sack_capacity,fish_per_sack,growth_hours*3600,fish_key))
+        except sqlite3.IntegrityError: raise HTTPException(409,"That pond level already exists.")
+    return RedirectResponse('/admin#fishery',303)
+
+
+@app.post("/admin/fish/species/{fish_key}")
+def edit_fish_species(request: Request, fish_key: str, name: str=Form(...), icon: str=Form("🐟"),
+    product_name: str=Form(...), product_icon: str=Form("🐟"), product_size: float=Form(...),
+    sale_price: int=Form(...), enabled: bool=Form(False)):
+    require_admin(request); clean=" ".join(name.split()); product=" ".join(product_name.split())
+    if len(clean)<2 or len(product)<2 or product_size<=0 or sale_price<1: raise HTTPException(400,"Enter valid fish details.")
+    with connection() as db:
+        result=db.execute("""UPDATE fish_species SET name=?,icon=?,product_name=?,product_icon=?,product_size=?,sale_price=?,enabled=?
+            WHERE fish_key=?""",(clean,icon.strip()[:12] or '🐟',product,product_icon.strip()[:12] or '🐟',product_size,sale_price,1 if enabled else 0,fish_key))
+        if not result.rowcount: raise HTTPException(404,"Fish species not found.")
+    return RedirectResponse('/admin#fishery',303)
+
+
+@app.post("/admin/fish/seeds/{seed_key}")
+def edit_fish_seed(request: Request, seed_key: str, fish_key: str=Form(...), name: str=Form(...), icon: str=Form("🫘"),
+    pack_size: float=Form(...), pack_price: int=Form(...), seeds_per_sack: int=Form(...), enabled: bool=Form(False)):
+    require_admin(request); clean=" ".join(name.split())
+    if len(clean)<2 or pack_size<=0 or pack_price<0 or seeds_per_sack<1: raise HTTPException(400,"Enter valid seed-sack details.")
+    with connection() as db:
+        if not db.execute("SELECT 1 FROM fish_species WHERE fish_key=?",(fish_key,)).fetchone(): raise HTTPException(400,"Fish species not found.")
+        result=db.execute("""UPDATE fish_seeds SET fish_key=?,name=?,icon=?,pack_size=?,pack_price=?,seeds_per_sack=?,enabled=?
+            WHERE seed_key=?""",(fish_key,clean,icon.strip()[:12] or '🫘',pack_size,pack_price,seeds_per_sack,1 if enabled else 0,seed_key))
+        if not result.rowcount: raise HTTPException(404,"Fish-seed product not found.")
+    return RedirectResponse('/admin#fishery',303)
+
+
+@app.post("/admin/fish/ponds/{pond_level}")
+def edit_pond_level(request: Request, pond_level: int, name: str=Form(...), icon: str=Form("💧"),
+    required_player_level: int=Form(...), cost: int=Form(...), land_blocks: int=Form(...), sack_capacity: int=Form(...),
+    fish_per_sack: int=Form(...), growth_hours: int=Form(...), fish_key: str=Form(...), enabled: bool=Form(False)):
+    require_admin(request); clean=" ".join(name.split())
+    if len(clean)<2 or cost<0 or min(land_blocks,sack_capacity,fish_per_sack,growth_hours)<1: raise HTTPException(400,"Enter valid pond-level details.")
+    with connection() as db:
+        if not db.execute("SELECT 1 FROM levels WHERE level=? AND enabled=1",(required_player_level,)).fetchone(): raise HTTPException(400,"Choose an enabled player level.")
+        if not db.execute("SELECT 1 FROM fish_species WHERE fish_key=?",(fish_key,)).fetchone(): raise HTTPException(400,"Fish species not found.")
+        result=db.execute("""UPDATE pond_catalog SET name=?,icon=?,required_player_level=?,cost=?,land_blocks=?,sack_capacity=?,
+            fish_per_sack=?,growth_seconds=?,fish_key=?,enabled=? WHERE pond_level=?""",
+            (clean,icon.strip()[:12] or '💧',required_player_level,cost,land_blocks,sack_capacity,fish_per_sack,growth_hours*3600,fish_key,1 if enabled else 0,pond_level))
+        if not result.rowcount: raise HTTPException(404,"Pond level not found.")
+    return RedirectResponse('/admin#fishery',303)

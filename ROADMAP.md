@@ -1,6 +1,6 @@
 # Animal Farm Roadmap
 
-## v1.1 — Admin workspace redesign
+## v1.1 — Admin workspace redesign (released)
 
 Turn the current long admin page into a focused administration workspace with a persistent vertical menu. Only the selected logical section is visible at a time, and the selected section is retained across saves and page reloads.
 
@@ -17,7 +17,7 @@ Planned workspaces:
 
 The desktop experience uses a sticky vertical sidebar. Smaller screens use a compact horizontally scrollable tab rail. Admin authorization and all existing server-side validation remain unchanged.
 
-## v2.0 — Fishery unit
+## v2.0 — Fishery unit (completed)
 
 Add a catalog-driven fishery system that shares the farm's land, Farmies, inventory, transport, player levels, XP, and ledgers.
 
@@ -67,3 +67,6 @@ Default example values, editable by admins:
 
 Add a Fishery workspace to the v1.1 admin sidebar for pond levels, fish species, seed products, player pond limits, user ponds, cycle history, and fishery economy/XP settings.
 
+### Completion status
+
+Completed for v2.0. Pond limits are enforced by player level, fishery XP eligibility is independently configurable, and administrators can inspect user ponds and recent production cycles. Catalog identifiers remain stable during edits, and active cycles retain their original output and timing snapshots.

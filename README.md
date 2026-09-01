@@ -43,4 +43,10 @@ The user LaunchAgent is installed as `com.pratik.animal-farm` and requires no ad
 
 ## Release
 
-The current development release is Animal Farm **v1.1.0**, created by Pratik Thombre. The original `v1.0` Git tag remains the immutable first release.
+The current stable release is Animal Farm **v2.0.0**, created by Pratik Thombre. The immutable `v1.0` and `v1.1.0` tags preserve the earlier releases.
+
+## Fishery administration
+
+The Fishery admin workspace controls fish species, fish-seed sacks, pond levels, player-level pond limits, and whether settled fish sales or permanent pond development earn XP. It also provides cross-user pond and recent production-cycle audit tables. A player can never build more ponds than the limit configured for their current highest level.
+
+Fishery catalog changes apply to future stocking cycles. A cycle already in progress preserves its original fish species, quantity, and ready time. Fish-seed purchases remain consumable purchases and do not earn development XP.

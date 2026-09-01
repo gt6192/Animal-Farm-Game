@@ -12,10 +12,16 @@
   }));
   const marketTabs = [...document.querySelectorAll('[data-market-tab]')];
   const marketPanels = [...document.querySelectorAll('[data-market-panel]')];
-  marketTabs.forEach(tab => tab.addEventListener('click', () => {
+  const activateMarketTab = tab => {
     marketTabs.forEach(item => item.setAttribute('aria-selected', String(item === tab)));
     marketPanels.forEach(panel => { panel.hidden = panel.dataset.marketPanel !== tab.dataset.marketTab; });
-  }));
+  };
+  marketTabs.forEach(tab => tab.addEventListener('click', () => activateMarketTab(tab)));
+  const requestedMarketTab = new URLSearchParams(location.search).get('market');
+  if (requestedMarketTab) {
+    const tab = marketTabs.find(item => item.dataset.marketTab === requestedMarketTab);
+    if (tab) activateMarketTab(tab);
+  }
   const requestedDialog = new URLSearchParams(location.search).get('open');
   if (requestedDialog) {
     const dialog = document.getElementById(requestedDialog), alert = document.querySelector('.game-alert');
@@ -26,6 +32,7 @@
   }
 
   const panelConfig = {
+    fishery: { icon: '🐟', label: 'Fishery', title: 'Ponds & fishery' },
     'my-animals': { icon: '🐾', label: 'My animals', title: 'My animals' },
     inventory: { icon: '🎒', label: 'Inventory', title: 'Farm inventory' },
     deliveries: { icon: '🚚', label: 'Deliveries', title: 'Market deliveries' },
@@ -66,6 +73,7 @@
   if (requestedDialog) {
     const cleanUrl = new URL(location.href);
     cleanUrl.searchParams.delete('open');
+    cleanUrl.searchParams.delete('market');
     history.replaceState(history.state, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
   }
 })();

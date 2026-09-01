@@ -1,9 +1,379 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><title>Farm Admin</title><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/progression.css"><link rel="stylesheet" href="/static/ui-fixes.css"><link rel="stylesheet" href="/static/farm-theme.css"><link rel="stylesheet" href="/static/professional.css"><link rel="stylesheet" href="/static/attractive.css"><link rel="stylesheet" href="/static/admin.css"><script src="/static/admin.js" defer></script></head><body><main class="shell">
-<header class="topbar"><div><p class="eyebrow">ADMIN ONLY</p><h1>Economy control</h1><p>Changes affect the rules for every farmer.</p></div><nav><a href="/">← Farm</a></nav></header>{% if error %}<div class="game-alert" role="alert"><span>⚠</span><strong>{{ error }}</strong><a href="/admin" aria-label="Dismiss message">×</a></div>{% endif %}
-<section class="panel"><p class="eyebrow">GLOBAL SETTINGS</p><h2>Starting economy & capacity</h2><div class="admin-grid">{% for item in settings %}<form action="/admin/settings" method="post"><label>{{ item.key|replace('_',' ') }}<input type="hidden" name="key" value="{{ item.key }}"><input name="value" type="number" step="any" min="0" value="{{ item.value }}"></label><button>Save</button></form>{% endfor %}</div></section>
-<section class="panel catalog-create"><p class="eyebrow">NEW FEED</p><h2>Add feed to the marketplace</h2><p>Create feed first, then select it while creating or editing an animal.</p><form class="catalog-form" action="/admin/feeds/create" method="post"><label>Feed name<input name="name" required maxlength="60" placeholder="Duck grain"></label><label>Icon<input name="icon" value="🌾" maxlength="12"></label><label>Price per pack<input name="pack_price" type="number" min="0" required value="1"></label><label>Capacity per pack<input name="pack_size" type="number" min="0.01" step="0.01" required value="0.1"></label><label class="wide">Description<input name="description" maxlength="240" placeholder="One pack feeds one duck for a full cycle."></label><button>Add feed</button></form></section>
-<section class="panel catalog-create"><p class="eyebrow">NEW ANIMAL</p><h2>Add an animal and its product</h2><form class="catalog-form animal-create-form" action="/admin/catalog/species/create" method="post"><label>Animal name<input name="name" required maxlength="60" placeholder="Duck"></label><label>Animal icon<input name="icon" value="🦆" maxlength="12"></label><label>Animal purchase price<input name="buy_price" type="number" min="1" required value="50"></label><label>Animal sell price<input name="sell_price" type="number" min="0" required value="25"></label><label>Land blocks<input name="land_blocks" type="number" min="1" required value="1"></label><label>Product name<input name="product_name" required maxlength="60" placeholder="Duck egg"></label><label>Product icon<input name="product_icon" value="🥚" maxlength="12"></label><label>Product capacity<input name="product_size" type="number" min="0.01" step="0.01" required value="0.5"></label><label>Product market price<input name="product_price" type="number" min="1" required value="5"></label><label>Production minutes<input name="production_minutes" type="number" min="1" required value="180"></label><label>Feed duration hours<input name="feed_hours" type="number" min="1" required value="6"></label><label>Unlock level<select name="required_level"><option value="">Locked / unassigned</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}">Level {{ level.level }}</option>{% endfor %}</select></label><label class="wide">Assigned feed<select name="feed_key" required><option value="">Choose feed</option>{% for feed in feeds %}<option value="{{ feed.feed_key }}">{{ feed.icon }} {{ feed.name }}</option>{% endfor %}</select></label><button>Add animal</button></form></section>
-<section class="panel"><p class="eyebrow">MARKET & TIMING</p><h2>Animal economy</h2>{% for item in species %}<form id="species-{{ item.species_key }}" action="/admin/species/{{ item.species_key }}" method="post"></form>{% endfor %}<div class="table-wrap"><table><thead><tr><th>Animal</th><th>Purchase price</th><th>Animal sell price</th><th>Product sale price</th><th>Cycle minutes</th><th>Assigned feed</th><th>Feed hours</th><th>Land</th><th>Product size</th><th>Unlock level</th><th></th></tr></thead><tbody>{% for item in species %}<tr><td>{{ item.icon }} {{ item.name }}</td><td><input form="species-{{ item.species_key }}" name="buy_price" type="number" min="1" value="{{ item.buy_price }}"></td><td><input form="species-{{ item.species_key }}" name="sell_price" type="number" min="0" value="{{ item.sell_price }}"></td><td><input form="species-{{ item.species_key }}" name="product_price" type="number" min="1" value="{{ item.product_price }}"></td><td><input form="species-{{ item.species_key }}" name="production_minutes" type="number" value="{{ item.production_seconds // 60 }}"></td><td><select form="species-{{ item.species_key }}" name="feed_key">{% for feed in feeds %}<option value="{{ feed.feed_key }}" {% if feed.feed_key == item.feed_key %}selected{% endif %}>{{ feed.icon }} {{ feed.name }}</option>{% endfor %}</select></td><td><input form="species-{{ item.species_key }}" name="feed_hours" type="number" value="{{ item.feed_hours }}"></td><td><input form="species-{{ item.species_key }}" name="land_blocks" type="number" value="{{ item.land_blocks }}"></td><td><input form="species-{{ item.species_key }}" name="product_size" type="number" step=".5" value="{{ item.product_size }}"></td><td><select form="species-{{ item.species_key }}" name="required_level"><option value="">Locked</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if item.required_level == level.level %}selected{% endif %}>Level {{ level.level }}</option>{% endfor %}</select></td><td><button form="species-{{ item.species_key }}">Save</button></td></tr>{% endfor %}</tbody></table></div></section>
-<section class="panel"><p class="eyebrow">FEED MARKET</p><h2>Feed pricing & storage size</h2><div class="admin-grid">{% for feed in feeds %}<form action="/admin/feed/{{ feed.feed_key }}" method="post"><label>Feed icon<input name="icon" value="{{ feed.icon }}" maxlength="12"></label><label>{{ feed.name }} price<input name="pack_price" type="number" min="0" value="{{ feed.pack_price }}"></label><label>Pack size<input name="pack_size" type="number" min="0.01" step="0.01" value="{{ feed.pack_size }}"></label><small>Used by: {{ feed.species_name }}</small><button>Save</button></form>{% endfor %}</div></section><section class="panel"><p class="eyebrow">LAND</p><h2>Expansion pricing</h2><div class="admin-grid">{% for item in expansions %}<form action="/admin/expansion/{{ item.blocks }}" method="post"><label>＋{{ item.blocks }} blocks<input name="price" type="number" min="0" value="{{ item.price }}"></label><label>Required level<select name="required_level"><option value="">Locked</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if item.required_level == level.level %}selected{% endif %}>Level {{ level.level }}</option>{% endfor %}</select></label><button>Save</button></form>{% endfor %}</div></section>
-<section class="panel"><p class="eyebrow">LEVELS & XP</p><h2>Progression control</h2><div class="admin-grid">{% for level in levels %}<form action="/admin/levels/save" method="post"><input type="hidden" name="level" value="{{ level.level }}"><label>Level name<input name="name" value="{{ level.name }}" required></label><label>Cumulative XP<input name="xp_required" type="number" min="0" value="{{ level.xp_required }}" required></label><label><input name="enabled" type="checkbox" {% if level.enabled %}checked{% endif %}> Enabled</label><button>Save Level {{ level.level }}</button></form>{% endfor %}<form action="/admin/levels/save" method="post"><label>New level<input name="level" type="number" min="2" required></label><label>Name<input name="name" required></label><label>Cumulative XP<input name="xp_required" type="number" min="1" required></label><label><input name="enabled" type="checkbox" checked> Enabled</label><button>Add level</button></form></div></section><section class="panel"><p class="eyebrow">INVENTORY & TRANSPORT LEVELS</p><h2>Upgrade catalog</h2><form class="catalog-form" action="/admin/catalog/upgrades/create" method="post"><label>Type<select name="upgrade_type"><option value="inventory">Inventory</option><option value="transport">Transport</option></select></label><label>Upgrade level<input name="upgrade_level" type="number" min="2" required></label><label>Name<input name="name" required></label><label>Required player level<select name="required_player_level" required>{% for level in levels if level.enabled %}<option value="{{ level.level }}">Level {{ level.level }} · {{ level.name }}</option>{% endfor %}</select></label><label>Cost<input name="cost" type="number" min="0" required></label><label>New total capacity<input name="capacity" type="number" step="any" min="1" required></label><label>Journey minutes (transport)<input name="journey_minutes" type="number" min="1"></label><button>Add upgrade level</button></form><div class="admin-grid">{% for upgrade in upgrades %}<form action="/admin/upgrades/{{ upgrade.upgrade_key }}" method="post"><label>Name<input name="name" value="{{ upgrade.name }}" required></label><label>Player level<select name="required_player_level" required>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if level.level == upgrade.required_player_level %}selected{% endif %}>Level {{ level.level }} · {{ level.name }}</option>{% endfor %}</select></label><label>Cost<input name="cost" type="number" min="0" value="{{ upgrade.cost }}" required></label><label>Capacity<input name="capacity" type="number" step="any" value="{{ upgrade.capacity }}" required></label>{% if upgrade.upgrade_type == "transport" %}<label>Journey minutes<input name="journey_minutes" type="number" min="1" value="{{ upgrade.seconds // 60 }}" required></label>{% endif %}<label><input name="enabled" type="checkbox" {% if upgrade.enabled %}checked{% endif %}> Enabled</label><button>Save {{ upgrade.upgrade_type }} L{{ upgrade.upgrade_level }}</button></form>{% endfor %}</div></section><section class="panel"><p class="eyebrow">MANUAL XP</p><h2>Adjust a farmer wallet</h2><form class="catalog-form" action="/admin/xp/adjust" method="post"><label>Farmer<select name="target_user_id">{% for user in users %}<option value="{{ user.id }}">{{ user.name }} · {{ user.total_xp }} XP · L{{ user.highest_level }}</option>{% endfor %}</select></label><label>XP adjustment<input name="amount" type="number" required></label><label class="wide">Required reason<input name="reason" minlength="3" required></label><button>Apply adjustment</button></form>{% for entry in xp_history %}<div class="ledger-row"><div><strong>{{ entry.name }} · {{ entry.reason }}</strong><small>{{ entry.category }} · {{ entry.created_at }}</small></div><b class="{{ "credit" if entry.amount > 0 else "debit" }}">{{ "+" if entry.amount > 0 else "" }}{{ entry.amount }} XP</b></div>{% endfor %}</section><section class="panel"><p class="eyebrow">FARMERS</p><h2>Known accounts</h2>{% for user in users %}<div class="ledger-row"><div><strong>{{ user.name }}</strong><small>{{ user.email or 'Daily Tracker user' }} · {{ user.auth_source }} · {{ user.role }}</small></div><b>F {{ user.farmies }} · {{ user.total_xp }} XP · Level {{ user.highest_level }}</b></div>{% endfor %}</section>
-</main></body></html>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<title>Farm Admin</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/progression.css">
+<link rel="stylesheet" href="/static/ui-fixes.css">
+<link rel="stylesheet" href="/static/farm-theme.css">
+<link rel="stylesheet" href="/static/professional.css">
+<link rel="stylesheet" href="/static/attractive.css">
+<link rel="stylesheet" href="/static/admin.css">
+<script src="/static/admin.js" defer>
+</script>
+</head>
+<body>
+<main class="shell">
+<header class="topbar">
+<div>
+<p class="eyebrow">ADMIN ONLY</p>
+<h1>Economy control</h1>
+<p>Changes affect the rules for every farmer.</p>
+</div>
+<nav>
+<a href="/">← Farm</a>
+</nav>
+</header>{% if error %}<div class="game-alert" role="alert">
+<span>⚠</span>
+<strong>{{ error }}</strong>
+<a href="/admin" aria-label="Dismiss message">×</a>
+</div>{% endif %}
+<section class="panel">
+<p class="eyebrow">GLOBAL SETTINGS</p>
+<h2>Starting economy & capacity</h2>
+<div class="admin-grid">{% for item in settings %}<form action="/admin/settings" method="post">
+<label>{{ item.key|replace('_',' ') }}<input type="hidden" name="key" value="{{ item.key }}">
+<input name="value" type="number" step="any" min="0" value="{{ item.value }}">
+</label>
+<button>Save</button>
+</form>{% endfor %}</div>
+</section>
+<section class="panel catalog-create">
+<p class="eyebrow">NEW FEED</p>
+<h2>Add feed to the marketplace</h2>
+<p>Create feed first, then select it while creating or editing an animal.</p>
+<form class="catalog-form" action="/admin/feeds/create" method="post">
+<label>Feed name<input name="name" required maxlength="60" placeholder="Duck grain">
+</label>
+<label>Icon<input name="icon" value="🌾" maxlength="12">
+</label>
+<label>Price per pack<input name="pack_price" type="number" min="0" required value="1">
+</label>
+<label>Capacity per pack<input name="pack_size" type="number" min="0.01" step="0.01" required value="0.1">
+</label>
+<label class="wide">Description<input name="description" maxlength="240" placeholder="One pack feeds one duck for a full cycle.">
+</label>
+<button>Add feed</button>
+</form>
+</section>
+<section class="panel catalog-create">
+<p class="eyebrow">NEW ANIMAL</p>
+<h2>Add an animal and its product</h2>
+<form class="catalog-form animal-create-form" action="/admin/catalog/species/create" method="post">
+<label>Animal name<input name="name" required maxlength="60" placeholder="Duck">
+</label>
+<label>Animal icon<input name="icon" value="🦆" maxlength="12">
+</label>
+<label>Animal purchase price<input name="buy_price" type="number" min="1" required value="50">
+</label>
+<label>Animal sell price<input name="sell_price" type="number" min="0" required value="25">
+</label>
+<label>Land blocks<input name="land_blocks" type="number" min="1" required value="1">
+</label>
+<label>Product name<input name="product_name" required maxlength="60" placeholder="Duck egg">
+</label>
+<label>Product icon<input name="product_icon" value="🥚" maxlength="12">
+</label>
+<label>Product capacity<input name="product_size" type="number" min="0.01" step="0.01" required value="0.5">
+</label>
+<label>Product market price<input name="product_price" type="number" min="1" required value="5">
+</label>
+<label>Production minutes<input name="production_minutes" type="number" min="1" required value="180">
+</label>
+<label>Feed duration hours<input name="feed_hours" type="number" min="1" required value="6">
+</label>
+<label>Unlock level<select name="required_level">
+<option value="">Locked / unassigned</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}">Level {{ level.level }}</option>{% endfor %}</select>
+</label>
+<label class="wide">Assigned feed<select name="feed_key" required>
+<option value="">Choose feed</option>{% for feed in feeds %}<option value="{{ feed.feed_key }}">{{ feed.icon }} {{ feed.name }}</option>{% endfor %}</select>
+</label>
+<button>Add animal</button>
+</form>
+</section>
+<section class="panel">
+<p class="eyebrow">MARKET & TIMING</p>
+<h2>Animal economy</h2>{% for item in species %}<form id="species-{{ item.species_key }}" action="/admin/species/{{ item.species_key }}" method="post">
+</form>{% endfor %}<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Animal</th>
+<th>Purchase price</th>
+<th>Animal sell price</th>
+<th>Product sale price</th>
+<th>Cycle minutes</th>
+<th>Assigned feed</th>
+<th>Feed hours</th>
+<th>Land</th>
+<th>Product size</th>
+<th>Unlock level</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>{% for item in species %}<tr>
+<td>{{ item.icon }} {{ item.name }}</td>
+<td>
+<input form="species-{{ item.species_key }}" name="buy_price" type="number" min="1" value="{{ item.buy_price }}">
+</td>
+<td>
+<input form="species-{{ item.species_key }}" name="sell_price" type="number" min="0" value="{{ item.sell_price }}">
+</td>
+<td>
+<input form="species-{{ item.species_key }}" name="product_price" type="number" min="1" value="{{ item.product_price }}">
+</td>
+<td>
+<input form="species-{{ item.species_key }}" name="production_minutes" type="number" value="{{ item.production_seconds // 60 }}">
+</td>
+<td>
+<select form="species-{{ item.species_key }}" name="feed_key">{% for feed in feeds %}<option value="{{ feed.feed_key }}" {% if feed.feed_key == item.feed_key %}selected{% endif %}>{{ feed.icon }} {{ feed.name }}</option>{% endfor %}</select>
+</td>
+<td>
+<input form="species-{{ item.species_key }}" name="feed_hours" type="number" value="{{ item.feed_hours }}">
+</td>
+<td>
+<input form="species-{{ item.species_key }}" name="land_blocks" type="number" value="{{ item.land_blocks }}">
+</td>
+<td>
+<input form="species-{{ item.species_key }}" name="product_size" type="number" step=".5" value="{{ item.product_size }}">
+</td>
+<td>
+<select form="species-{{ item.species_key }}" name="required_level">
+<option value="">Locked</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if item.required_level == level.level %}selected{% endif %}>Level {{ level.level }}</option>{% endfor %}</select>
+</td>
+<td>
+<button form="species-{{ item.species_key }}">Save</button>
+</td>
+</tr>{% endfor %}</tbody>
+</table>
+</div>
+</section>
+<section class="panel">
+<p class="eyebrow">FEED MARKET</p>
+<h2>Feed pricing & storage size</h2>
+<div class="admin-grid">{% for feed in feeds %}<form action="/admin/feed/{{ feed.feed_key }}" method="post">
+<label>Feed icon<input name="icon" value="{{ feed.icon }}" maxlength="12">
+</label>
+<label>{{ feed.name }} price<input name="pack_price" type="number" min="0" value="{{ feed.pack_price }}">
+</label>
+<label>Pack size<input name="pack_size" type="number" min="0.01" step="0.01" value="{{ feed.pack_size }}">
+</label>
+<small>Used by: {{ feed.species_name }}</small>
+<button>Save</button>
+</form>{% endfor %}</div>
+</section>
+<section class="panel">
+<p class="eyebrow">LAND</p>
+<h2>Expansion pricing</h2>
+<div class="admin-grid">{% for item in expansions %}<form action="/admin/expansion/{{ item.blocks }}" method="post">
+<label>＋{{ item.blocks }} blocks<input name="price" type="number" min="0" value="{{ item.price }}">
+</label>
+<label>Required level<select name="required_level">
+<option value="">Locked</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if item.required_level == level.level %}selected{% endif %}>Level {{ level.level }}</option>{% endfor %}</select>
+</label>
+<button>Save</button>
+</form>{% endfor %}</div>
+</section>
+<section class="panel">
+<p class="eyebrow">LEVELS & XP</p>
+<h2>Progression control</h2>
+<div class="admin-grid">{% for level in levels %}<form action="/admin/levels/save" method="post">
+<input type="hidden" name="level" value="{{ level.level }}">
+<label>Level name<input name="name" value="{{ level.name }}" required>
+</label>
+<label>Cumulative XP<input name="xp_required" type="number" min="0" value="{{ level.xp_required }}" required>
+</label>
+<label>
+<input name="enabled" type="checkbox" {% if level.enabled %}checked{% endif %}> Enabled</label>
+<button>Save Level {{ level.level }}</button>
+</form>{% endfor %}<form action="/admin/levels/save" method="post">
+<label>New level<input name="level" type="number" min="2" required>
+</label>
+<label>Name<input name="name" required>
+</label>
+<label>Cumulative XP<input name="xp_required" type="number" min="1" required>
+</label>
+<label>
+<input name="enabled" type="checkbox" checked> Enabled</label>
+<button>Add level</button>
+</form>
+</div>
+</section>
+<section class="panel">
+<p class="eyebrow">INVENTORY & TRANSPORT LEVELS</p>
+<h2>Upgrade catalog</h2>
+<form class="catalog-form" action="/admin/catalog/upgrades/create" method="post">
+<label>Type<select name="upgrade_type">
+<option value="inventory">Inventory</option>
+<option value="transport">Transport</option>
+</select>
+</label>
+<label>Upgrade level<input name="upgrade_level" type="number" min="2" required>
+</label>
+<label>Name<input name="name" required>
+</label>
+<label>Required player level<select name="required_player_level" required>{% for level in levels if level.enabled %}<option value="{{ level.level }}">Level {{ level.level }} · {{ level.name }}</option>{% endfor %}</select>
+</label>
+<label>Cost<input name="cost" type="number" min="0" required>
+</label>
+<label>New total capacity<input name="capacity" type="number" step="any" min="1" required>
+</label>
+<label>Journey minutes (transport)<input name="journey_minutes" type="number" min="1">
+</label>
+<button>Add upgrade level</button>
+</form>
+<div class="admin-grid">{% for upgrade in upgrades %}<form action="/admin/upgrades/{{ upgrade.upgrade_key }}" method="post">
+<label>Name<input name="name" value="{{ upgrade.name }}" required>
+</label>
+<label>Player level<select name="required_player_level" required>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if level.level == upgrade.required_player_level %}selected{% endif %}>Level {{ level.level }} · {{ level.name }}</option>{% endfor %}</select>
+</label>
+<label>Cost<input name="cost" type="number" min="0" value="{{ upgrade.cost }}" required>
+</label>
+<label>Capacity<input name="capacity" type="number" step="any" value="{{ upgrade.capacity }}" required>
+</label>{% if upgrade.upgrade_type == "transport" %}<label>Journey minutes<input name="journey_minutes" type="number" min="1" value="{{ upgrade.seconds // 60 }}" required>
+</label>{% endif %}<label>
+<input name="enabled" type="checkbox" {% if upgrade.enabled %}checked{% endif %}> Enabled</label>
+<button>Save {{ upgrade.upgrade_type }} L{{ upgrade.upgrade_level }}</button>
+</form>{% endfor %}</div>
+</section>
+<section class="panel">
+<p class="eyebrow">MANUAL XP</p>
+<h2>Adjust a farmer wallet</h2>
+<form class="catalog-form" action="/admin/xp/adjust" method="post">
+<label>Farmer<select name="target_user_id">{% for user in users %}<option value="{{ user.id }}">{{ user.name }} · {{ user.total_xp }} XP · L{{ user.highest_level }}</option>{% endfor %}</select>
+</label>
+<label>XP adjustment<input name="amount" type="number" required>
+</label>
+<label class="wide">Required reason<input name="reason" minlength="3" required>
+</label>
+<button>Apply adjustment</button>
+</form>{% for entry in xp_history %}<div class="ledger-row">
+<div>
+<strong>{{ entry.name }} · {{ entry.reason }}</strong>
+<small>{{ entry.category }} · {{ entry.created_at }}</small>
+</div>
+<b class="{{ "credit" if entry.amount > 0 else "debit" }}">{{ "+" if entry.amount > 0 else "" }}{{ entry.amount }} XP</b>
+</div>{% endfor %}</section>
+<section class="panel">
+<p class="eyebrow">FARMERS</p>
+<h2>Known accounts</h2>{% for user in users %}<div class="ledger-row">
+<div>
+<strong>{{ user.name }}</strong>
+<small>{{ user.email or 'Daily Tracker user' }} · {{ user.auth_source }} · {{ user.role }}</small>
+</div>
+<b>F {{ user.farmies }} · {{ user.total_xp }} XP · Level {{ user.highest_level }}</b>
+</div>{% endfor %}</section>
+<section class="panel catalog-create">
+<p class="eyebrow">FISHERY CATALOG</p>
+<h2>Fish, seed sacks & pond levels</h2>
+<p>Every pond rule is catalog-driven and assigned to a player level.</p>
+<h3>New fish species</h3>
+<form class="catalog-form" action="/admin/fish/species/create" method="post">
+<label>Name<input name="name" required>
+</label>
+<label>Icon<input name="icon" value="🐟">
+</label>
+<label>Inventory product name<input name="product_name" required>
+</label>
+<label>Product icon<input name="product_icon" value="🐟">
+</label>
+<label>Capacity per fish<input name="product_size" type="number" step="0.01" min="0.01" value="1" required>
+</label>
+<label>Market sale price<input name="sale_price" type="number" min="1" value="10" required>
+</label>
+<button>Add fish</button>
+</form>
+<h3>New fish-seed sack</h3>
+<form class="catalog-form" action="/admin/fish/seeds/create" method="post">
+<label>Fish<select name="fish_key" required>{% for fish in fish_species %}<option value="{{ fish.fish_key }}">{{ fish.icon }} {{ fish.name }}</option>{% endfor %}</select>
+</label>
+<label>Name<input name="name" required>
+</label>
+<label>Icon<input name="icon" value="🫘">
+</label>
+<label>Sack inventory size<input name="pack_size" type="number" step="0.01" min="0.01" value="0.5" required>
+</label>
+<label>Sack price<input name="pack_price" type="number" min="0" value="100" required>
+</label>
+<label>Seeds per sack<input name="seeds_per_sack" type="number" min="1" value="100" required>
+</label>
+<button>Add seed sack</button>
+</form>
+<h3>New pond level</h3>
+<form class="catalog-form" action="/admin/fish/ponds/create" method="post">
+<label>Pond level<input name="pond_level" type="number" min="1" required>
+</label>
+<label>Name<input name="name" required>
+</label>
+<label>Icon<input name="icon" value="💧">
+</label>
+<label>Required player level<select name="required_player_level" required>{% for level in levels if level.enabled %}<option value="{{ level.level }}">Level {{ level.level }}</option>{% endfor %}</select>
+</label>
+<label>Price<input name="cost" type="number" min="1" required>
+</label>
+<label>Land blocks<input name="land_blocks" type="number" min="1" required>
+</label>
+<label>Sack capacity<input name="sack_capacity" type="number" min="1" required>
+</label>
+<label>Fish per sack<input name="fish_per_sack" type="number" min="1" value="100" required>
+</label>
+<label>Growth hours<input name="growth_hours" type="number" min="1" value="24" required>
+</label>
+<label>Fish species<select name="fish_key" required>{% for fish in fish_species if fish.enabled %}<option value="{{ fish.fish_key }}">{{ fish.icon }} {{ fish.name }}</option>{% endfor %}</select>
+</label>
+<button>Add pond level</button>
+</form>
+<h3>Existing fish species</h3>
+<div class="admin-grid fish-admin-grid">{% for fish in fish_species %}<form action="/admin/fish/species/{{ fish.fish_key }}" method="post">
+<strong>{{ fish.icon }} {{ fish.name }}</strong><small>Stable key: {{ fish.fish_key }}</small>
+<label>Name<input name="name" value="{{ fish.name }}" required></label><label>Icon<input name="icon" value="{{ fish.icon }}"></label>
+<label>Inventory product<input name="product_name" value="{{ fish.product_name }}" required></label><label>Product icon<input name="product_icon" value="{{ fish.product_icon }}"></label>
+<label>Capacity per fish<input name="product_size" type="number" step="0.01" min="0.01" value="{{ fish.product_size }}" required></label>
+<label>Market sale price<input name="sale_price" type="number" min="1" value="{{ fish.sale_price }}" required></label>
+<label><input name="enabled" type="checkbox" {% if fish.enabled %}checked{% endif %}> Enabled</label><button>Save fish</button>
+</form>{% endfor %}</div>
+<h3>Existing fish-seed sacks</h3>
+<div class="admin-grid fish-admin-grid">{% for seed in fish_seeds %}<form action="/admin/fish/seeds/{{ seed.seed_key }}" method="post">
+<strong>{{ seed.icon }} {{ seed.name }}</strong><small>Stable key: {{ seed.seed_key }}</small>
+<label>Fish<select name="fish_key" required>{% for fish in fish_species %}<option value="{{ fish.fish_key }}" {% if fish.fish_key == seed.fish_key %}selected{% endif %}>{{ fish.icon }} {{ fish.name }}</option>{% endfor %}</select></label>
+<label>Name<input name="name" value="{{ seed.name }}" required></label><label>Icon<input name="icon" value="{{ seed.icon }}"></label>
+<label>Sack inventory size<input name="pack_size" type="number" step="0.01" min="0.01" value="{{ seed.pack_size }}" required></label>
+<label>Sack price<input name="pack_price" type="number" min="0" value="{{ seed.pack_price }}" required></label>
+<label>Seeds per sack<input name="seeds_per_sack" type="number" min="1" value="{{ seed.seeds_per_sack }}" required></label>
+<label><input name="enabled" type="checkbox" {% if seed.enabled %}checked{% endif %}> Enabled</label><button>Save seed sack</button>
+</form>{% endfor %}</div>
+<h3>Existing pond levels</h3>
+<div class="admin-grid fish-admin-grid">{% for pond in pond_catalog %}<form action="/admin/fish/ponds/{{ pond.pond_level }}" method="post">
+<strong>{{ pond.icon }} Level {{ pond.pond_level }} · {{ pond.name }}</strong><small>The level number remains stable for owned ponds.</small>
+<label>Name<input name="name" value="{{ pond.name }}" required></label><label>Icon<input name="icon" value="{{ pond.icon }}"></label>
+<label>Required player level<select name="required_player_level" required>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if level.level == pond.required_player_level %}selected{% endif %}>Level {{ level.level }}</option>{% endfor %}</select></label>
+<label>Price<input name="cost" type="number" min="0" value="{{ pond.cost }}" required></label><label>Land blocks<input name="land_blocks" type="number" min="1" value="{{ pond.land_blocks }}" required></label>
+<label>Sack capacity<input name="sack_capacity" type="number" min="1" value="{{ pond.sack_capacity }}" required></label><label>Fish per sack<input name="fish_per_sack" type="number" min="1" value="{{ pond.fish_per_sack }}" required></label>
+<label>Growth hours<input name="growth_hours" type="number" min="1" value="{{ pond.growth_seconds // 3600 }}" required></label>
+<label>Fish species<select name="fish_key" required>{% for fish in fish_species %}<option value="{{ fish.fish_key }}" {% if fish.fish_key == pond.fish_key %}selected{% endif %}>{{ fish.icon }} {{ fish.name }}</option>{% endfor %}</select></label>
+<label><input name="enabled" type="checkbox" {% if pond.enabled %}checked{% endif %}> Enabled</label><button>Save pond level</button>
+</form>{% endfor %}</div>
+<h3>Player pond limits</h3>
+<p>Set the maximum total ponds available at each player level. A higher level uses its own configured limit.</p>
+<div class="admin-grid fish-admin-grid">{% for item in pond_limits %}<form action="/admin/fish/pond-limits/{{ item.level }}" method="post">
+<strong>Level {{ item.level }} · {{ item.name }}</strong>
+<label>Maximum ponds<input name="max_ponds" type="number" min="0" value="{{ item.max_ponds }}" required></label>
+<button>Save pond limit</button>
+</form>{% endfor %}</div>
+<h3>Fishery XP controls</h3>
+<div class="admin-grid fish-admin-grid">
+<form action="/admin/settings" method="post"><input type="hidden" name="key" value="fishery_sales_xp_enabled"><strong>Settled fish sales</strong><label>XP status<select name="value"><option value="1" {% if settings|selectattr('key','equalto','fishery_sales_xp_enabled')|map(attribute='value')|first == '1' %}selected{% endif %}>Enabled</option><option value="0" {% if settings|selectattr('key','equalto','fishery_sales_xp_enabled')|map(attribute='value')|first == '0' %}selected{% endif %}>Disabled</option></select></label><button>Save fish-sales XP</button></form>
+<form action="/admin/settings" method="post"><input type="hidden" name="key" value="fishery_development_xp_enabled"><strong>Pond construction & upgrades</strong><label>XP status<select name="value"><option value="1" {% if settings|selectattr('key','equalto','fishery_development_xp_enabled')|map(attribute='value')|first == '1' %}selected{% endif %}>Enabled</option><option value="0" {% if settings|selectattr('key','equalto','fishery_development_xp_enabled')|map(attribute='value')|first == '0' %}selected{% endif %}>Disabled</option></select></label><button>Save development XP</button></form>
+</div>
+<h3>User ponds</h3>
+<div class="table-wrap"><table><thead><tr><th>Farmer</th><th>Pond</th><th>Level</th><th>Status</th><th>Stocked</th><th>Ready</th><th>Lifetime harvest</th></tr></thead><tbody>{% for pond in user_ponds %}<tr><td>{{ pond.farmer_name }}<small>{{ pond.email or '' }}</small></td><td>{{ pond.pond_name }}</td><td>{{ pond.pond_level }} · {{ pond.level_name }}</td><td>{{ pond.status|title }}</td><td>{{ pond.stocked_sacks }} sacks</td><td>{{ pond.ready_fish }}</td><td>{{ pond.lifetime_harvest }}</td></tr>{% else %}<tr><td colspan="7">No user ponds yet.</td></tr>{% endfor %}</tbody></table></div>
+<h3>Latest production cycles</h3>
+<div class="table-wrap"><table><thead><tr><th>Farmer</th><th>Pond</th><th>Fish</th><th>Seed sacks</th><th>Output</th><th>Status</th><th>Started</th><th>Ready / harvested</th></tr></thead><tbody>{% for cycle in pond_cycles %}<tr><td>{{ cycle.farmer_name }}</td><td>{{ cycle.pond_name }}</td><td>{{ cycle.fish_name }}</td><td>{{ cycle.sacks }}</td><td>{{ cycle.fish_count }}</td><td>{{ cycle.status|title }}</td><td>{{ cycle.started_at }}</td><td>{{ cycle.harvested_at or cycle.ready_at }}</td></tr>{% else %}<tr><td colspan="8">No production cycles yet.</td></tr>{% endfor %}</tbody></table></div>
+</section>
+</main>
+</body>
+</html>
