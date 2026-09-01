@@ -63,4 +63,9 @@
     });
     document.body.appendChild(rail);
   }
+  if (requestedDialog) {
+    const cleanUrl = new URL(location.href);
+    cleanUrl.searchParams.delete('open');
+    history.replaceState(history.state, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+  }
 })();
