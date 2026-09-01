@@ -41,4 +41,4 @@ The user LaunchAgent is installed as `com.pratik.animal-farm` and requires no ad
 
 ## Release
 
-This repository is Animal Farm **v1.0.0**, created by Pratik Thombre.
+The current development release is Animal Farm **v1.1.0**, created by Pratik Thombre. The original `v1.0` Git tag remains the immutable first release.
