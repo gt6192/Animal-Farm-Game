@@ -2,6 +2,8 @@
 
 Animal Farm is a separate FastAPI dashboard game in the Daily Tracker Arcade family. It runs at `http://127.0.0.1:8002` and stores gameplay in `animal-farm.db`.
 
+The repository includes `animal-farm-template.db`, a sanitized v1.1 starter database containing the schema and shared catalog/settings data with no users, sessions, balances, inventory, deliveries, or ledger history. The live `animal-farm.db` remains ignored because it contains private gameplay data. The application can also create a fresh live database automatically on first launch.
+
 ## Authentication
 
 An active Daily Target Tracker session is accepted automatically using the tracker session signature and user identity. Tracker admin roles inherit Animal Farm admin access. Players who do not use Daily Target Tracker can create a separate game account at `/login`; passwords use salted PBKDF2 hashes.
