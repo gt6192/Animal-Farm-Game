@@ -88,3 +88,7 @@ Animal catalog editing includes product display names and icons, while preservin
 ### v3.0.3
 
 Processing buildings, output products, and recipes are all editable. Unused catalog entries may be deleted; records referenced by owned buildings, jobs, recipes, or inventory are safely archived by disabling them so player data and audit history remain valid.
+
+### v3.0.4
+
+Processing catalogue editing is presented in compact, responsive record cards: save and delete/archive actions stay together, while recipe inputs use a dedicated ingredient-builder panel.
