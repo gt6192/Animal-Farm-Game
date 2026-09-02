@@ -100,3 +100,7 @@ Processing buildings are one-time purchases. Each building now has its own paid 
 ### v3.1.1
 
 The processing workshop uses a per-building slot board. Each idle slot selects and starts exactly one recipe output; active and ready jobs remain in their own slot until collected, with no separate processing-history panel.
+
+### v3.1.2
+
+The Processing admin workspace is grouped into focused sub-tabs for Buildings, Slot levels, Products, Recipes, and Job audit.

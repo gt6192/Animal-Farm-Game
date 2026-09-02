@@ -65,6 +65,56 @@
   activate(requested);
   window.addEventListener('hashchange', () => activate(location.hash.slice(1)));
 
+  const processing = content.querySelector('[data-admin-section="processing"]');
+  if (processing) {
+    const groups = {
+      buildings: { label: 'Buildings', icon: '🏭', headings: ['New building', 'Edit buildings'] },
+      levels: { label: 'Slot levels', icon: '⬆️', headings: ['Building slot upgrades'] },
+      products: { label: 'Products', icon: '📦', headings: ['New processed product', 'Edit processed products'] },
+      recipes: { label: 'Recipes', icon: '🧾', headings: ['New recipe', 'Existing recipes'] },
+      audit: { label: 'Job audit', icon: '📋', headings: ['Recent processing jobs'] }
+    };
+    const headings = [...processing.querySelectorAll(':scope > h3')];
+    if (headings.length) {
+      const tabbar = document.createElement('nav');
+      tabbar.className = 'processing-admin-tabs';
+      tabbar.setAttribute('aria-label', 'Processing administration');
+      const panelHost = document.createElement('div');
+      panelHost.className = 'processing-admin-panels';
+      const panels = {};
+      Object.entries(groups).forEach(([key, group]) => {
+        const button = document.createElement('button');
+        button.type = 'button'; button.dataset.processingTab = key;
+        button.innerHTML = `<span>${group.icon}</span>${group.label}`;
+        tabbar.appendChild(button);
+        const panel = document.createElement('section');
+        panel.className = 'processing-admin-tab-panel'; panel.dataset.processingTabPanel = key;
+        panelHost.appendChild(panel); panels[key] = panel;
+      });
+      headings[0].before(tabbar, panelHost);
+      headings.forEach((heading, index) => {
+        const groupKey = Object.entries(groups).find(([, group]) => group.headings.includes(heading.textContent.trim()))?.[0];
+        if (!groupKey) return;
+        const end = headings[index + 1];
+        const nodes = [heading];
+        let node = heading.nextElementSibling;
+        while (node && node !== end) { nodes.push(node); node = node.nextElementSibling; }
+        nodes.forEach(item => panels[groupKey].appendChild(item));
+      });
+      const activateProcessingTab = key => {
+        const selected = panels[key] ? key : 'buildings';
+        Object.entries(panels).forEach(([panelKey, panel]) => { panel.hidden = panelKey !== selected; });
+        tabbar.querySelectorAll('button').forEach(button => button.setAttribute('aria-current', button.dataset.processingTab === selected ? 'page' : 'false'));
+        localStorage.setItem('animalFarmProcessingAdminTab', selected);
+      };
+      tabbar.addEventListener('click', event => {
+        const button = event.target.closest('button[data-processing-tab]');
+        if (button) activateProcessingTab(button.dataset.processingTab);
+      });
+      activateProcessingTab(localStorage.getItem('animalFarmProcessingAdminTab') || 'buildings');
+    }
+  }
+
   document.querySelectorAll('[data-recipe-input-builder]').forEach(builder => {
     const rows = builder.querySelector('[data-ingredient-rows]');
     const template = builder.querySelector('template');
