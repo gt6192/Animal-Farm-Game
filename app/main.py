@@ -175,11 +175,11 @@ def initialize_database() -> None:
             password_hash TEXT NOT NULL DEFAULT '',role TEXT NOT NULL DEFAULT 'user',auth_source TEXT NOT NULL DEFAULT 'animal_farm',
             farmies INTEGER NOT NULL DEFAULT 2000,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
         db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
-        settings = {'starting_farmies':'2000','farm_price':'1000','initial_land_blocks':'150','fixed_land_blocks':'30','inventory_blocks':'20','inventory_capacity':'100','bicycle_capacity':'50','bicycle_seconds':'3600','xp_sales_rate':'10','xp_development_rate':'20','fishery_sales_xp_enabled':'1','fishery_development_xp_enabled':'1','capacity_per_land':'5','land_50_price':'1200','land_100_price':'2600','land_250_price':'7500'}
+        settings = {'starting_farmies':'2000','farm_price':'1000','initial_land_blocks':'150','fixed_land_blocks':'0','inventory_blocks':'20','inventory_capacity':'100','bicycle_capacity':'50','bicycle_seconds':'3600','xp_sales_rate':'10','xp_development_rate':'20','fishery_sales_xp_enabled':'1','fishery_development_xp_enabled':'1','capacity_per_land':'5','land_50_price':'1200','land_100_price':'2600','land_250_price':'7500'}
         db.executemany("INSERT OR IGNORE INTO settings(key,value) VALUES (?,?)", settings.items())
         db.execute("""CREATE TABLE IF NOT EXISTS farms(
             user_id INTEGER PRIMARY KEY,name TEXT NOT NULL DEFAULT '',owned INTEGER NOT NULL DEFAULT 0,total_blocks INTEGER NOT NULL DEFAULT 150,
-            fixed_blocks INTEGER NOT NULL DEFAULT 30,inventory_blocks INTEGER NOT NULL DEFAULT 20,
+            fixed_blocks INTEGER NOT NULL DEFAULT 0,inventory_blocks INTEGER NOT NULL DEFAULT 20,
             inventory_capacity REAL NOT NULL DEFAULT 100,transport_key TEXT NOT NULL DEFAULT 'bicycle',updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
         farm_columns = {row["name"] for row in db.execute("PRAGMA table_info(farms)")}
         if "name" not in farm_columns:
@@ -187,6 +187,9 @@ def initialize_database() -> None:
         for column, definition in (("inventory_level", "INTEGER NOT NULL DEFAULT 1"), ("transport_level", "INTEGER NOT NULL DEFAULT 1"),
                                    ("transport_capacity", "REAL NOT NULL DEFAULT 50"), ("transport_seconds", "INTEGER NOT NULL DEFAULT 3600")):
             if column not in farm_columns: db.execute(f"ALTER TABLE farms ADD COLUMN {column} {definition}")
+        # Reserved fixed farm area has been retired; all farms receive those blocks back.
+        db.execute("UPDATE settings SET value='0',updated_at=CURRENT_TIMESTAMP WHERE key='fixed_land_blocks'")
+        db.execute("UPDATE farms SET fixed_blocks=0 WHERE fixed_blocks<>0")
         db.execute("""CREATE TABLE IF NOT EXISTS species(
             species_key TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,land_blocks INTEGER NOT NULL,buy_price INTEGER NOT NULL,
             sell_price INTEGER NOT NULL DEFAULT 0,
@@ -578,7 +581,7 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     game_settings['bicycle_capacity'] = farm['transport_capacity']; game_settings['bicycle_seconds'] = farm['transport_seconds']
     return {"farm": dict(farm), "user": dict(user), "species": species, "owned_species": owned_species, "inventory": inventory,
             "inventory_items": inventory_items, "animal_land": animal_land,
-            "land_available": farm["total_blocks"] - farm["fixed_blocks"] - farm["inventory_blocks"] - animal_land - pond_land - processing_land,
+            "land_available": farm["total_blocks"] - farm["inventory_blocks"] - animal_land - pond_land - processing_land,
             "inventory_used": inventory_used, "deliveries": deliveries, "transport_busy": transport_busy,
             "cargo": cargo, "cargo_capacity": cargo_capacity, "cargo_revenue": cargo_revenue,
             "ledger": ledger, "expansions": expansions,
@@ -1150,7 +1153,7 @@ def catalog_key(value: str) -> str:
 def admin_page(request: Request, error: str = ""):
     require_admin(request)
     with connection() as db:
-        settings = [dict(row) for row in db.execute("SELECT * FROM settings ORDER BY key")]
+        settings = [dict(row) for row in db.execute("SELECT * FROM settings WHERE key!='fixed_land_blocks' ORDER BY key")]
         species = [dict(row) for row in db.execute("SELECT * FROM species ORDER BY name")]
         feeds = [dict(row) for row in db.execute("""SELECT f.*,COALESCE(GROUP_CONCAT(s.name, ', '),'Not assigned') species_name
             FROM feeds f LEFT JOIN species s ON s.feed_key=f.feed_key GROUP BY f.feed_key ORDER BY f.name""")]
@@ -1190,7 +1193,7 @@ def admin_page(request: Request, error: str = ""):
 @app.post("/admin/settings")
 def admin_setting(request: Request, key: str = Form(...), value: str = Form(...)):
     require_admin(request)
-    allowed = {'starting_farmies','farm_price','initial_land_blocks','fixed_land_blocks','inventory_blocks','inventory_capacity','bicycle_capacity','bicycle_seconds','xp_sales_rate','xp_development_rate','fishery_sales_xp_enabled','fishery_development_xp_enabled','capacity_per_land'}
+    allowed = {'starting_farmies','farm_price','initial_land_blocks','inventory_blocks','inventory_capacity','bicycle_capacity','bicycle_seconds','xp_sales_rate','xp_development_rate','fishery_sales_xp_enabled','fishery_development_xp_enabled','capacity_per_land'}
     if key not in allowed or float(value) < 0 or (key in {'xp_sales_rate','xp_development_rate','capacity_per_land'} and float(value)<=0): raise HTTPException(400, "Invalid setting.")
     with connection() as db: db.execute("UPDATE settings SET value=?,updated_at=CURRENT_TIMESTAMP WHERE key=?", (value, key))
     return RedirectResponse("/admin", 303)

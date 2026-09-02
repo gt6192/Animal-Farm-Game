@@ -120,3 +120,7 @@ Inventory upgrade cards show the current inventory land footprint, additional la
 ### v3.1.6
 
 Land expansion administration supports creating custom packages, editing price and required level, and removing future offers without changing land already owned by farmers.
+
+### v3.1.7
+
+Retired the reserved fixed-farm-area feature. Existing and new farms use no hidden fixed land allocation, returning that space to available land.
