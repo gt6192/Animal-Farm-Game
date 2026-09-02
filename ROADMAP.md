@@ -70,3 +70,9 @@ Add a Fishery workspace to the v1.1 admin sidebar for pond levels, fish species,
 ### Completion status
 
 Completed for v2.0. Pond limits are enforced by player level, fishery XP eligibility is independently configurable, and administrators can inspect user ponds and recent production cycles. Catalog identifiers remain stable during edits, and active cycles retain their original output and timing snapshots.
+
+## v3.0 — Processing & Admin workspace (released)
+
+The administration console uses a persistent vertical workspace menu on desktop and a compact horizontal tab rail on smaller screens. It separates game settings, animals, feed, land, progression, upgrades, fishery, processing, and player data.
+
+Processing adds configurable buildings, processed products, recipes, inputs, durations, fees, slots, and player-level requirements. Farmers purchase buildings using Farmies and free land, begin server-timed jobs using inventory inputs, collect completed output once, then sell it using existing inventory and transport systems. Jobs preserve their input and output snapshot while running; processing itself grants no XP, while building purchases and settled sales use the established development and sales XP ledger rules.

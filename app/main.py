@@ -305,6 +305,39 @@ def initialize_database() -> None:
             player_level INTEGER PRIMARY KEY,max_ponds INTEGER NOT NULL CHECK(max_ponds>=0),
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
         db.executemany("INSERT OR IGNORE INTO pond_limits(player_level,max_ponds) VALUES (?,?)",[(1,0),(2,1),(3,2)])
+        db.execute("""CREATE TABLE IF NOT EXISTS processing_building_catalog(
+            building_key TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,description TEXT NOT NULL,
+            cost INTEGER NOT NULL,land_blocks INTEGER NOT NULL,slot_count INTEGER NOT NULL,required_level INTEGER NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS user_processing_buildings(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,building_key TEXT NOT NULL,
+            purchased_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        db.execute("CREATE INDEX IF NOT EXISTS user_processing_buildings_user ON user_processing_buildings(user_id,id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS processing_products(
+            product_key TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,product_size REAL NOT NULL,
+            product_price INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS processing_recipes(
+            recipe_key TEXT PRIMARY KEY,building_key TEXT NOT NULL,name TEXT NOT NULL,icon TEXT NOT NULL,description TEXT NOT NULL,
+            required_level INTEGER NOT NULL,duration_seconds INTEGER NOT NULL,fee INTEGER NOT NULL,output_key TEXT NOT NULL,
+            output_quantity INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS processing_recipe_inputs(
+            recipe_key TEXT NOT NULL,product_key TEXT NOT NULL,quantity INTEGER NOT NULL,
+            PRIMARY KEY(recipe_key,product_key))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS processing_jobs(
+            id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,building_id INTEGER NOT NULL,recipe_key TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'processing',
+            input_snapshot TEXT NOT NULL,output_key TEXT NOT NULL,output_name TEXT NOT NULL,output_icon TEXT NOT NULL,output_size REAL NOT NULL,
+            output_price INTEGER NOT NULL,output_quantity INTEGER NOT NULL,fee INTEGER NOT NULL,started_at TEXT NOT NULL,ready_at TEXT NOT NULL,collected_at TEXT)""")
+        db.execute("CREATE INDEX IF NOT EXISTS processing_jobs_user_status ON processing_jobs(user_id,status,ready_at)")
+        db.executemany("INSERT OR IGNORE INTO processing_building_catalog VALUES (?,?,?,?,?,?,?,?,1)",[
+            ('packing_station','Packing Station','📦','Pack fresh farm goods for sale.',1200,5,1,2),
+            ('dairy_shed','Dairy Shed','🧀','Turn fresh milk into premium cheese.',2500,8,1,3)])
+        db.executemany("INSERT OR IGNORE INTO processing_products VALUES (?,?,?,?,?,1)",[
+            ('egg_carton','Egg carton','🥚',1,70),('cheese','Cheese','🧀',1,150)])
+        db.executemany("INSERT OR IGNORE INTO processing_recipes VALUES (?,?,?,?,?,?,?,?,?,?,1)",[
+            ('egg_carton_recipe','packing_station','Egg carton','🥚','Pack twelve eggs into a market-ready carton.',2,1800,0,'egg_carton',1),
+            ('cheese_recipe','dairy_shed','Farmhouse cheese','🧀','Turn goat milk into aged cheese.',3,7200,0,'cheese',1)])
+        db.executemany("INSERT OR IGNORE INTO processing_recipe_inputs VALUES (?,?,?)",[
+            ('egg_carton_recipe','egg',12),('cheese_recipe','goat_milk',5)])
         db.execute("""INSERT OR IGNORE INTO fish_species VALUES
             ('carp','Carp','🐟','carp_fish','Carp fish','🐟',1,10,1)""")
         db.execute("""INSERT OR IGNORE INTO fish_seeds VALUES
@@ -411,6 +444,7 @@ def sync_world(db: sqlite3.Connection, user_id: int) -> None:
                 SELECT id FROM pond_cycles WHERE pond_id=user_ponds.id AND user_id=? AND status='growing' ORDER BY started_at DESC LIMIT 1))
         WHERE user_id=? AND status='growing' AND ready_at<=?""", (user_id, user_id, current.isoformat()))
     db.execute("UPDATE pond_cycles SET status='ready' WHERE user_id=? AND status='growing' AND ready_at<=?", (user_id,current.isoformat()))
+    db.execute("UPDATE processing_jobs SET status='ready' WHERE user_id=? AND status='processing' AND ready_at<=?",(user_id,current.isoformat()))
 
 
 def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
@@ -454,6 +488,11 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
         seed["quantity"] = (db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(user_id,seed["seed_key"])).fetchone() or {"quantity":0})["quantity"]
         inventory.append({"product_key":seed["seed_key"],"product_name":seed["name"],"product_icon":seed["icon"],
             "product_size":seed["pack_size"],"product_price":None,"quantity":seed["quantity"],"is_feed":True})
+    processing_products = [dict(row) for row in db.execute("SELECT * FROM processing_products ORDER BY name")]
+    for product in processing_products:
+        product['quantity']=(db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(user_id,product['product_key'])).fetchone() or {'quantity':0})['quantity']
+        inventory.append({'product_key':product['product_key'],'product_name':product['name'],'product_icon':product['icon'],
+            'product_size':product['product_size'],'product_price':product['product_price'],'quantity':product['quantity'],'is_feed':False})
     animal_land = sum(item["quantity"] * item["land_blocks"] for item in species)
     ponds = [dict(row) for row in db.execute("""SELECT p.*,c.name level_name,c.icon,c.land_blocks,c.sack_capacity,c.fish_per_sack,c.growth_seconds,
         c.fish_key,f.name fish_name,f.product_icon,s.seed_key,s.name seed_name,COALESCE(i.quantity,0) seed_quantity
@@ -461,6 +500,20 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
         LEFT JOIN fish_seeds s ON s.fish_key=c.fish_key AND s.enabled=1 LEFT JOIN inventory i ON i.user_id=p.user_id AND i.product_key=s.seed_key
         WHERE p.user_id=? ORDER BY p.id""",(user_id,))]
     pond_land = sum(pond["land_blocks"] for pond in ponds)
+    processing_buildings=[dict(row) for row in db.execute("""SELECT u.id,c.*,COUNT(j.id) active_jobs
+        FROM user_processing_buildings u JOIN processing_building_catalog c USING(building_key)
+        LEFT JOIN processing_jobs j ON j.building_id=u.id AND j.status='processing'
+        WHERE u.user_id=? GROUP BY u.id ORDER BY u.id""",(user_id,))]
+    processing_buildings_catalog=[dict(row) for row in db.execute("SELECT * FROM processing_building_catalog WHERE enabled=1 ORDER BY required_level,name")]
+    recipes=[dict(row) for row in db.execute("""SELECT r.*,p.name output_name,p.icon output_icon,p.product_size,p.product_price
+        FROM processing_recipes r JOIN processing_products p ON p.product_key=r.output_key WHERE r.enabled=1 ORDER BY r.name""")]
+    for recipe in recipes:
+        recipe['inputs']=[dict(row) for row in db.execute("""WITH products AS (SELECT product_key,product_name name,product_icon icon FROM species
+            UNION ALL SELECT product_key,product_name,product_icon FROM fish_species UNION ALL SELECT product_key,name,icon FROM processing_products)
+            SELECT i.product_key,i.quantity,p.name,p.icon,COALESCE(stock.quantity,0) stock FROM processing_recipe_inputs i
+            JOIN products p USING(product_key) LEFT JOIN inventory stock ON stock.user_id=? AND stock.product_key=i.product_key WHERE i.recipe_key=?""",(user_id,recipe['recipe_key']))]
+    processing_jobs=[dict(row) for row in db.execute("SELECT * FROM processing_jobs WHERE user_id=? ORDER BY started_at DESC LIMIT 30",(user_id,))]
+    processing_land=sum(building['land_blocks'] for building in processing_buildings)
     inventory_used = sum(item["quantity"] * item["product_size"] for item in inventory)
     inventory_items = [item for item in inventory if item["quantity"] > 0]
     owned_species = [item for item in species if item["quantity"] > 0]
@@ -468,7 +521,8 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     transport_busy = any(delivery["status"] == "travelling" for delivery in deliveries)
     cargo = [dict(row) for row in db.execute("""WITH products AS (
         SELECT product_key,product_name,product_icon,product_size,product_price FROM species
-        UNION ALL SELECT product_key,product_name,product_icon,product_size,sale_price FROM fish_species)
+        UNION ALL SELECT product_key,product_name,product_icon,product_size,sale_price FROM fish_species
+        UNION ALL SELECT product_key,name,icon,product_size,product_price FROM processing_products)
         SELECT c.product_key,c.quantity,c.loaded_at,p.product_name,p.product_icon,p.product_size,p.product_price,
         c.quantity*p.product_size capacity_used,c.quantity*p.product_price revenue
         FROM transport_cargo c JOIN products p ON p.product_key=c.product_key WHERE c.user_id=? ORDER BY c.loaded_at,c.product_key""", (user_id,))]
@@ -496,11 +550,12 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     game_settings['bicycle_capacity'] = farm['transport_capacity']; game_settings['bicycle_seconds'] = farm['transport_seconds']
     return {"farm": dict(farm), "user": dict(user), "species": species, "owned_species": owned_species, "inventory": inventory,
             "inventory_items": inventory_items, "animal_land": animal_land,
-            "land_available": farm["total_blocks"] - farm["fixed_blocks"] - farm["inventory_blocks"] - animal_land - pond_land,
+            "land_available": farm["total_blocks"] - farm["fixed_blocks"] - farm["inventory_blocks"] - animal_land - pond_land - processing_land,
             "inventory_used": inventory_used, "deliveries": deliveries, "transport_busy": transport_busy,
             "cargo": cargo, "cargo_capacity": cargo_capacity, "cargo_revenue": cargo_revenue,
             "ledger": ledger, "expansions": expansions,
             "feeds": feeds, "fish_species":fish_species,"fish_seeds":fish_seeds,"ponds":ponds,"pond_land":pond_land,"pond_limit":pond_limit,
+            "processing_buildings":processing_buildings,"processing_buildings_catalog":processing_buildings_catalog,"processing_recipes":recipes,"processing_jobs":processing_jobs,"processing_land":processing_land,
             "pond_catalog":[dict(row) for row in db.execute("SELECT * FROM pond_catalog WHERE enabled=1 ORDER BY pond_level")],
             "settings": game_settings, "xp": wallet, "upgrades": upgrades, "transport_name":transport_name,"transport_icon":transport_icon,
             "transport_duration":duration_label(farm['transport_seconds']),"now_iso": current.isoformat()}
@@ -840,6 +895,63 @@ def upgrade_pond(request: Request, pond_id: int):
     return RedirectResponse("/?open=fishery-screen",303)
 
 
+@app.post('/processing/buildings/buy')
+def buy_processing_building(request: Request, building_key: str=Form(...)):
+    uid=user_id(request)
+    with connection() as db:
+        state=snapshot(db,uid); building=db.execute("SELECT * FROM processing_building_catalog WHERE building_key=? AND enabled=1",(building_key,)).fetchone()
+        if not building: raise HTTPException(404,'Processing building not found.')
+        if state['xp']['highest_level']<building['required_level']: raise HTTPException(403,f"Reach Level {building['required_level']} to buy this building.")
+        if state['land_available']<building['land_blocks']: raise HTTPException(400,f"You need {building['land_blocks']} free land blocks.")
+        event=f"processing-building:{uuid.uuid4().hex}"; transact(db,uid,-building['cost'],event,f"Purchased {building['name']}")
+        grant_xp_for_farmies(db,uid,event,'development',building['cost'],f"Purchased {building['name']}")
+        db.execute("INSERT INTO user_processing_buildings(user_id,building_key) VALUES (?,?)",(uid,building_key))
+    return RedirectResponse('/?open=processing-screen',303)
+
+
+@app.post('/processing/jobs/start')
+def start_processing_job(request: Request, building_id: int=Form(...), recipe_key: str=Form(...), batches: int=Form(1)):
+    uid=user_id(request)
+    if batches<1 or batches>100: raise HTTPException(400,'Choose a valid batch quantity.')
+    with connection() as db:
+        state=snapshot(db,uid); building=db.execute("""SELECT u.id,c.* FROM user_processing_buildings u
+            JOIN processing_building_catalog c USING(building_key) WHERE u.id=? AND u.user_id=?""",(building_id,uid)).fetchone()
+        recipe=db.execute("""SELECT r.*,p.name output_name,p.icon output_icon,p.product_size,p.product_price FROM processing_recipes r
+            JOIN processing_products p ON p.product_key=r.output_key WHERE r.recipe_key=? AND r.enabled=1""",(recipe_key,)).fetchone()
+        if not building or not recipe or recipe['building_key']!=building['building_key']: raise HTTPException(400,'Choose a recipe for this building.')
+        if state['xp']['highest_level']<max(building['required_level'],recipe['required_level']): raise HTTPException(403,'Your player level is too low for this recipe.')
+        active=db.execute("SELECT COUNT(*) FROM processing_jobs WHERE building_id=? AND status='processing'",(building_id,)).fetchone()[0]
+        if active>=building['slot_count']: raise HTTPException(409,'All processing slots are busy.')
+        inputs=[dict(row) for row in db.execute("SELECT * FROM processing_recipe_inputs WHERE recipe_key=?",(recipe_key,))]
+        if not inputs: raise HTTPException(400,'This recipe has no inputs configured.')
+        for item in inputs:
+            stock=db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(uid,item['product_key'])).fetchone()
+            if not stock or stock['quantity']<item['quantity']*batches: raise HTTPException(400,f"Not enough {item['product_key'].replace('_',' ')}.")
+        event=f"processing-fee:{uuid.uuid4().hex}"
+        if recipe['fee']*batches: transact(db,uid,-recipe['fee']*batches,event,f"Processing fee: {recipe['name']}")
+        snapshot_inputs=[]
+        for item in inputs:
+            amount=item['quantity']*batches; db.execute("UPDATE inventory SET quantity=quantity-? WHERE user_id=? AND product_key=?",(amount,uid,item['product_key']))
+            snapshot_inputs.append({'product_key':item['product_key'],'quantity':amount})
+        started=now(); ready=started+timedelta(seconds=recipe['duration_seconds'])
+        db.execute("""INSERT INTO processing_jobs(id,user_id,building_id,recipe_key,status,input_snapshot,output_key,output_name,output_icon,output_size,output_price,output_quantity,fee,started_at,ready_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
+            uuid.uuid4().hex,uid,building_id,recipe_key,'processing',json.dumps(snapshot_inputs),recipe['output_key'],recipe['output_name'],recipe['output_icon'],recipe['product_size'],recipe['product_price'],recipe['output_quantity']*batches,recipe['fee']*batches,started.isoformat(),ready.isoformat()))
+    return RedirectResponse('/?open=processing-screen',303)
+
+
+@app.post('/processing/jobs/{job_id}/collect')
+def collect_processing_job(request: Request, job_id: str):
+    uid=user_id(request)
+    with connection() as db:
+        state=snapshot(db,uid); job=db.execute("SELECT * FROM processing_jobs WHERE id=? AND user_id=?",(job_id,uid)).fetchone()
+        if not job or job['status']!='ready': raise HTTPException(400,'That processing job is not ready.')
+        if job['output_quantity']*job['output_size']>state['farm']['inventory_capacity']-state['inventory_used']+1e-9: raise HTTPException(400,'Not enough inventory room for this output.')
+        db.execute("INSERT INTO inventory(user_id,product_key,quantity) VALUES (?,?,?) ON CONFLICT(user_id,product_key) DO UPDATE SET quantity=quantity+excluded.quantity",(uid,job['output_key'],job['output_quantity']))
+        db.execute("UPDATE processing_jobs SET status='collected',collected_at=? WHERE id=? AND user_id=?",(now().isoformat(),job_id,uid))
+    return RedirectResponse('/?open=processing-screen',303)
+
+
 @app.post("/transport/load")
 def load_transport(request: Request, product_key: str = Form(...), quantity: int = Form(...)):
     uid = user_id(request)
@@ -849,10 +961,11 @@ def load_transport(request: Request, product_key: str = Form(...), quantity: int
         if db.execute("SELECT 1 FROM deliveries WHERE user_id=? AND status='travelling' LIMIT 1", (uid,)).fetchone():
             raise HTTPException(409, "The bicycle is currently delivering goods.")
         product = db.execute("""SELECT product_key,product_name,product_size,product_price FROM species WHERE product_key=?
-            UNION ALL SELECT product_key,product_name,product_size,sale_price FROM fish_species WHERE product_key=? LIMIT 1""", (product_key,product_key)).fetchone()
+            UNION ALL SELECT product_key,product_name,product_size,sale_price FROM fish_species WHERE product_key=?
+            UNION ALL SELECT product_key,name,product_size,product_price FROM processing_products WHERE product_key=? LIMIT 1""", (product_key,product_key,product_key)).fetchone()
         stock = db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?", (uid, product_key)).fetchone()
         if not product or not stock or stock["quantity"] < quantity: raise HTTPException(400, "Not enough inventory.")
-        loaded_capacity = db.execute("""WITH products AS (SELECT product_key,product_size FROM species UNION ALL SELECT product_key,product_size FROM fish_species)
+        loaded_capacity = db.execute("""WITH products AS (SELECT product_key,product_size FROM species UNION ALL SELECT product_key,product_size FROM fish_species UNION ALL SELECT product_key,product_size FROM processing_products)
             SELECT COALESCE(SUM(c.quantity*p.product_size),0) total FROM transport_cargo c JOIN products p ON p.product_key=c.product_key WHERE c.user_id=?""", (uid,)).fetchone()["total"]
         capacity = product["product_size"] * quantity
         max_capacity = db.execute("SELECT transport_capacity FROM farms WHERE user_id=?",(uid,)).fetchone()[0]
@@ -883,9 +996,11 @@ def discard_inventory(request: Request, product_key: str = Form(...), quantity: 
                UNION ALL
                SELECT product_name FROM fish_species WHERE product_key=?
                UNION ALL
+               SELECT name FROM processing_products WHERE product_key=?
+               UNION ALL
                SELECT name FROM fish_seeds WHERE seed_key=?
                LIMIT 1""",
-            (product_key, product_key, product_key, product_key),
+            (product_key, product_key, product_key, product_key, product_key),
         ).fetchone()
         if not item:
             raise HTTPException(404, "Inventory item not found.")
@@ -930,7 +1045,8 @@ def send_transport(request: Request):
         if db.execute("SELECT 1 FROM deliveries WHERE user_id=? AND status='travelling' LIMIT 1", (uid,)).fetchone():
             raise HTTPException(409, "The bicycle is currently delivering goods.")
         cargo = db.execute("""WITH products AS (SELECT product_key,product_size,product_price FROM species
-            UNION ALL SELECT product_key,product_size,sale_price FROM fish_species)
+            UNION ALL SELECT product_key,product_size,sale_price FROM fish_species
+            UNION ALL SELECT product_key,product_size,product_price FROM processing_products)
             SELECT c.product_key,c.quantity,p.product_size,p.product_price
             FROM transport_cargo c JOIN products p ON p.product_key=c.product_key WHERE c.user_id=?""", (uid,)).fetchall()
         if not cargo: raise HTTPException(400, "Load goods before sending the bicycle.")
@@ -1009,7 +1125,15 @@ def admin_page(request: Request, error: str = ""):
             p.name pond_name,u.name farmer_name,f.name fish_name
             FROM pond_cycles x JOIN user_ponds p ON p.id=x.pond_id JOIN users u ON u.id=x.user_id
             JOIN fish_species f ON f.fish_key=x.fish_key ORDER BY x.started_at DESC LIMIT 200""")]
-    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"fish_species":fish_species,"fish_seeds":fish_seeds,"pond_catalog":pond_catalog,"pond_limits":pond_limits,"user_ponds":user_ponds,"pond_cycles":pond_cycles,"identity": request.state.identity, "error": error})
+        processing_buildings=[dict(row) for row in db.execute("SELECT * FROM processing_building_catalog ORDER BY name")]
+        processing_products=[dict(row) for row in db.execute("SELECT * FROM processing_products ORDER BY name")]
+        processing_recipes=[dict(row) for row in db.execute("SELECT r.*,GROUP_CONCAT(i.product_key || ' × ' || i.quantity, ', ') inputs FROM processing_recipes r LEFT JOIN processing_recipe_inputs i USING(recipe_key) GROUP BY r.recipe_key ORDER BY r.name")]
+        processing_jobs=[dict(row) for row in db.execute("""SELECT j.*,u.name farmer_name,b.name building_name FROM processing_jobs j
+            JOIN users u ON u.id=j.user_id JOIN user_processing_buildings ub ON ub.id=j.building_id
+            JOIN processing_building_catalog b ON b.building_key=ub.building_key ORDER BY j.started_at DESC LIMIT 200""")]
+        product_catalog=[dict(row) for row in db.execute("""SELECT product_key,product_name name,product_icon icon FROM species
+            UNION ALL SELECT product_key,product_name,product_icon FROM fish_species UNION ALL SELECT product_key,name,icon FROM processing_products ORDER BY name""")]
+    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"fish_species":fish_species,"fish_seeds":fish_seeds,"pond_catalog":pond_catalog,"pond_limits":pond_limits,"user_ponds":user_ponds,"pond_cycles":pond_cycles,"processing_buildings":processing_buildings,"processing_products":processing_products,"processing_recipes":processing_recipes,"processing_jobs":processing_jobs,"product_catalog":product_catalog,"identity": request.state.identity, "error": error})
 
 
 @app.post("/admin/settings")
@@ -1030,6 +1154,71 @@ def admin_pond_limit(request: Request, player_level: int, max_ponds: int=Form(..
         db.execute("""INSERT INTO pond_limits(player_level,max_ponds) VALUES (?,?)
             ON CONFLICT(player_level) DO UPDATE SET max_ponds=excluded.max_ponds,updated_at=CURRENT_TIMESTAMP""",(player_level,max_ponds))
     return RedirectResponse('/admin#fishery',303)
+
+
+@app.post('/admin/processing/buildings/create')
+def admin_processing_building_create(request: Request, name: str=Form(...), icon: str=Form('🏭'), description: str=Form(''), cost: int=Form(...), land_blocks: int=Form(...), slot_count: int=Form(...), required_level: int=Form(...)):
+    require_admin(request); clean=' '.join(name.split()); key=catalog_key(clean)
+    if len(clean)<2 or min(cost,land_blocks,slot_count,required_level)<1: raise HTTPException(400,'Enter valid building details.')
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM levels WHERE level=?',(required_level,)).fetchone(): raise HTTPException(400,'Choose an existing level.')
+        try: db.execute('INSERT INTO processing_building_catalog VALUES (?,?,?,?,?,?,?,?,1)',(key,clean,icon.strip()[:12] or '🏭',description.strip()[:240],cost,land_blocks,slot_count,required_level))
+        except sqlite3.IntegrityError: raise HTTPException(409,'That processing building already exists.')
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/products/create')
+def admin_processing_product_create(request: Request, name: str=Form(...), icon: str=Form('📦'), product_size: float=Form(...), product_price: int=Form(...)):
+    require_admin(request); clean=' '.join(name.split()); key=catalog_key(clean)
+    if len(clean)<2 or product_size<=0 or product_price<1: raise HTTPException(400,'Enter valid processed-product details.')
+    with connection() as db:
+        try: db.execute('INSERT INTO processing_products VALUES (?,?,?,?,?,1)',(key,clean,icon.strip()[:12] or '📦',product_size,product_price))
+        except sqlite3.IntegrityError: raise HTTPException(409,'That product already exists.')
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/recipes/create')
+def admin_processing_recipe_create(request: Request, building_key: str=Form(...), name: str=Form(...), icon: str=Form('⚙️'), description: str=Form(''), required_level: int=Form(...), duration_minutes: int=Form(...), fee: int=Form(0), output_key: str=Form(...), output_quantity: int=Form(...), inputs: str=Form(...)):
+    require_admin(request); clean=' '.join(name.split()); key=catalog_key(clean)
+    if len(clean)<2 or min(required_level,duration_minutes,output_quantity)<1 or fee<0: raise HTTPException(400,'Enter valid recipe details.')
+    parsed=[]
+    try:
+        for part in inputs.split(','):
+            product,amount=part.strip().split(':',1); amount=int(amount); product=product.strip()
+            if amount<1 or not product: raise ValueError
+            parsed.append((product,amount))
+    except ValueError: raise HTTPException(400,'Inputs must use product_key:quantity, separated by commas.')
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM processing_building_catalog WHERE building_key=?',(building_key,)).fetchone(): raise HTTPException(400,'Building not found.')
+        if not db.execute('SELECT 1 FROM processing_products WHERE product_key=?',(output_key,)).fetchone(): raise HTTPException(400,'Output product not found.')
+        if not db.execute('SELECT 1 FROM levels WHERE level=?',(required_level,)).fetchone(): raise HTTPException(400,'Level not found.')
+        for product,_ in parsed:
+            if not db.execute("SELECT 1 FROM (SELECT product_key FROM species UNION SELECT product_key FROM fish_species UNION SELECT product_key FROM processing_products) WHERE product_key=?",(product,)).fetchone(): raise HTTPException(400,f'Unknown input product: {product}')
+        try:
+            db.execute('INSERT INTO processing_recipes VALUES (?,?,?,?,?,?,?,?,?,?,1)',(key,building_key,clean,icon.strip()[:12] or '⚙️',description.strip()[:240],required_level,duration_minutes*60,fee,output_key,output_quantity))
+            db.executemany('INSERT INTO processing_recipe_inputs VALUES (?,?,?)',[(key,p,q) for p,q in parsed])
+        except sqlite3.IntegrityError: raise HTTPException(409,'That recipe already exists.')
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/buildings/{building_key}')
+def admin_processing_building_edit(request: Request, building_key: str, name: str=Form(...), icon: str=Form('🏭'), description: str=Form(''), cost: int=Form(...), land_blocks: int=Form(...), slot_count: int=Form(...), required_level: int=Form(...), enabled: bool=Form(False)):
+    require_admin(request); clean=' '.join(name.split())
+    if len(clean)<2 or min(cost,land_blocks,slot_count,required_level)<1: raise HTTPException(400,'Enter valid building details.')
+    with connection() as db:
+        result=db.execute('UPDATE processing_building_catalog SET name=?,icon=?,description=?,cost=?,land_blocks=?,slot_count=?,required_level=?,enabled=? WHERE building_key=?',(clean,icon.strip()[:12] or '🏭',description.strip()[:240],cost,land_blocks,slot_count,required_level,1 if enabled else 0,building_key))
+        if not result.rowcount: raise HTTPException(404,'Building not found.')
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/products/{product_key}')
+def admin_processing_product_edit(request: Request, product_key: str, name: str=Form(...), icon: str=Form('📦'), product_size: float=Form(...), product_price: int=Form(...), enabled: bool=Form(False)):
+    require_admin(request); clean=' '.join(name.split())
+    if len(clean)<2 or product_size<=0 or product_price<1: raise HTTPException(400,'Enter valid processed-product details.')
+    with connection() as db:
+        result=db.execute('UPDATE processing_products SET name=?,icon=?,product_size=?,product_price=?,enabled=? WHERE product_key=?',(clean,icon.strip()[:12] or '📦',product_size,product_price,1 if enabled else 0,product_key))
+        if not result.rowcount: raise HTTPException(404,'Product not found.')
+    return RedirectResponse('/admin#processing',303)
 
 
 @app.post("/admin/levels/save")

@@ -36,7 +36,8 @@
     'my-animals': { icon: '🐾', label: 'My animals', title: 'My animals' },
     inventory: { icon: '🎒', label: 'Inventory', title: 'Farm inventory' },
     deliveries: { icon: '🚚', label: 'Deliveries', title: 'Market deliveries' },
-    ledger: { icon: '📒', label: 'Ledger', title: 'Farmies ledger' }
+    ledger: { icon: '📒', label: 'Ledger', title: 'Farmies ledger' },
+    processing: { icon: '⚙️', label: 'Processing', title: 'Processing workshop' }
   };
   const panels = [...document.querySelectorAll('[data-game-panel]')];
   if (panels.length) {

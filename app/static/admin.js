@@ -7,6 +7,7 @@
     { key: 'progression', label: 'Levels & XP', icon: '⭐', titles: ['LEVELS & XP', 'MANUAL XP'] },
     { key: 'upgrades', label: 'Upgrades', icon: '🏗️', titles: ['INVENTORY & TRANSPORT LEVELS'] },
     { key: 'fishery', label: 'Fishery', icon: '🐟', titles: ['FISHERY CATALOG'] },
+    { key: 'processing', label: 'Processing', icon: '⚙️', titles: ['PROCESSING'] },
     { key: 'players', label: 'Players', icon: '👩‍🌾', titles: ['FARMERS'] }
   ];
   const shell = document.querySelector('.shell');

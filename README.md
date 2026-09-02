@@ -43,7 +43,11 @@ The user LaunchAgent is installed as `com.pratik.animal-farm` and requires no ad
 
 ## Release
 
-The current stable release is Animal Farm **v2.0.0**, created by Pratik Thombre. The immutable `v1.0` and `v1.1.0` tags preserve the earlier releases.
+The current stable release is Animal Farm **v3.0.0**, created by Pratik Thombre. Earlier version tags preserve previous releases.
+
+## Processing
+
+The Marketplace offers enabled processing buildings once the farmer reaches their required level and has enough free land. The Processing panel lets farmers start recipe batches from owned buildings, track server-side completion while offline, and collect output into Inventory. Inputs are consumed only after a valid job starts; output is collected once and can then be transported and sold as usual. Administrators manage building, processed-product, and recipe catalogs from the Processing workspace.
 
 ## Fishery administration
 
