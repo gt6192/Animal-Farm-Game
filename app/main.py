@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import time
 import uuid
@@ -565,6 +566,12 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     pond_limit = pond_limit_row['max_ponds'] if pond_limit_row else 0
     upgrades = [dict(row) for row in db.execute("""SELECT c.*,CASE WHEN u.upgrade_key IS NULL THEN 0 ELSE 1 END purchased
         FROM upgrade_catalog c LEFT JOIN user_upgrades u ON u.upgrade_key=c.upgrade_key AND u.user_id=? WHERE c.enabled=1 ORDER BY c.upgrade_type,c.upgrade_level""",(user_id,))]
+    capacity_per_land = setting(db, 'capacity_per_land', float)
+    for upgrade in upgrades:
+        if upgrade['upgrade_type'] == 'inventory':
+            upgrade['current_land_blocks'] = farm['inventory_blocks']
+            upgrade['target_land_blocks'] = int(math.ceil(upgrade['capacity'] / capacity_per_land))
+            upgrade['additional_land_blocks'] = max(0, upgrade['target_land_blocks'] - farm['inventory_blocks'])
     current_transport = db.execute("SELECT name FROM upgrade_catalog WHERE upgrade_type='transport' AND upgrade_level=?",(farm['transport_level'],)).fetchone()
     transport_name = current_transport['name'] if current_transport else 'Bicycle'
     transport_icon = '🚲' if farm['transport_level']==1 else ('🏍️' if 'bike' in transport_name.lower() else '🚚')

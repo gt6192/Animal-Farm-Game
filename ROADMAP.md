@@ -112,3 +112,7 @@ Fixed Processing admin sub-tab visibility so only the selected panel is displaye
 ### v3.1.4
 
 Processing slot recipe choices display their configured ingredient quantities and output, rather than duplicating the recipe title.
+
+### v3.1.5
+
+Inventory upgrade cards show the current inventory land footprint, additional land required for the selected capacity, and resulting total footprint.
