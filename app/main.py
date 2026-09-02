@@ -1273,13 +1273,14 @@ def admin_xp_adjust(request: Request, target_user_id: int=Form(...), amount: int
 
 
 @app.post("/admin/species/{species_key}")
-def admin_species(request: Request, species_key: str, buy_price: int = Form(...), sell_price: int = Form(...), product_price: int = Form(...), production_minutes: int = Form(...), feed_hours: int = Form(...), land_blocks: int = Form(...), product_size: float = Form(...), feed_key: str = Form(...), required_level: int | None = Form(None)):
+def admin_species(request: Request, species_key: str, product_name: str = Form(...), product_icon: str = Form("📦"), buy_price: int = Form(...), sell_price: int = Form(...), product_price: int = Form(...), production_minutes: int = Form(...), feed_hours: int = Form(...), land_blocks: int = Form(...), product_size: float = Form(...), feed_key: str = Form(...), required_level: int | None = Form(None)):
     require_admin(request)
-    if min(buy_price,product_price,production_minutes,feed_hours,land_blocks) < 1 or sell_price < 0 or product_size <= 0: raise HTTPException(400, "Values must be positive, and the animal sell price cannot be negative.")
+    clean_product_name = " ".join(product_name.split())
+    if len(clean_product_name)<2 or min(buy_price,product_price,production_minutes,feed_hours,land_blocks) < 1 or sell_price < 0 or product_size <= 0: raise HTTPException(400, "Enter a valid product name and positive values; the animal sell price cannot be negative.")
     with connection() as db:
         if not db.execute("SELECT 1 FROM feeds WHERE feed_key=?", (feed_key,)).fetchone(): raise HTTPException(400, "Selected feed does not exist.")
         if required_level and not db.execute("SELECT 1 FROM levels WHERE level=? AND enabled=1",(required_level,)).fetchone(): raise HTTPException(400,"Choose an enabled level.")
-        result = db.execute("""UPDATE species SET buy_price=?,sell_price=?,product_price=?,production_seconds=?,feed_hours=?,land_blocks=?,product_size=?,feed_key=?,required_level=? WHERE species_key=?""", (buy_price,sell_price,product_price,production_minutes*60,feed_hours,land_blocks,product_size,feed_key,required_level,species_key))
+        result = db.execute("""UPDATE species SET product_name=?,product_icon=?,buy_price=?,sell_price=?,product_price=?,production_seconds=?,feed_hours=?,land_blocks=?,product_size=?,feed_key=?,required_level=? WHERE species_key=?""", (clean_product_name,product_icon.strip()[:12] or '📦',buy_price,sell_price,product_price,production_minutes*60,feed_hours,land_blocks,product_size,feed_key,required_level,species_key))
         if not result.rowcount: raise HTTPException(404, "Species not found.")
     return RedirectResponse("/admin", 303)
 

@@ -102,6 +102,7 @@
 <thead>
 <tr>
 <th>Animal</th>
+<th>Product name & icon</th>
 <th>Purchase price</th>
 <th>Animal sell price</th>
 <th>Product sale price</th>
@@ -117,6 +118,10 @@
 </thead>
 <tbody>{% for item in species %}<tr>
 <td>{{ item.icon }} {{ item.name }}</td>
+<td>
+<input form="species-{{ item.species_key }}" name="product_name" value="{{ item.product_name }}" aria-label="Product name for {{ item.name }}">
+<input form="species-{{ item.species_key }}" name="product_icon" value="{{ item.product_icon }}" maxlength="12" aria-label="Product icon for {{ item.name }}">
+</td>
 <td>
 <input form="species-{{ item.species_key }}" name="buy_price" type="number" min="1" value="{{ item.buy_price }}">
 </td>

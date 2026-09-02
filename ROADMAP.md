@@ -80,3 +80,7 @@ Processing adds configurable buildings, processed products, recipes, inputs, dur
 ### v3.0.1
 
 The Processing recipe editor uses a dynamic ingredient builder with product dropdowns, quantities, and add/remove rows. This removes manual product-key entry and supports mixed recipes safely.
+
+### v3.0.2
+
+Animal catalog editing includes product display names and icons, while preserving each stable product key for existing inventory and delivery records.
