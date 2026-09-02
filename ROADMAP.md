@@ -76,3 +76,7 @@ Completed for v2.0. Pond limits are enforced by player level, fishery XP eligibi
 The administration console uses a persistent vertical workspace menu on desktop and a compact horizontal tab rail on smaller screens. It separates game settings, animals, feed, land, progression, upgrades, fishery, processing, and player data.
 
 Processing adds configurable buildings, processed products, recipes, inputs, durations, fees, slots, and player-level requirements. Farmers purchase buildings using Farmies and free land, begin server-timed jobs using inventory inputs, collect completed output once, then sell it using existing inventory and transport systems. Jobs preserve their input and output snapshot while running; processing itself grants no XP, while building purchases and settled sales use the established development and sales XP ledger rules.
+
+### v3.0.1
+
+The Processing recipe editor uses a dynamic ingredient builder with product dropdowns, quantities, and add/remove rows. This removes manual product-key entry and supports mixed recipes safely.

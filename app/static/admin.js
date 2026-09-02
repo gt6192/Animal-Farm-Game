@@ -64,4 +64,24 @@
   const requested = location.hash.slice(1) || localStorage.getItem('animalFarmAdminSection') || 'overview';
   activate(requested);
   window.addEventListener('hashchange', () => activate(location.hash.slice(1)));
+
+  document.querySelectorAll('[data-recipe-input-builder]').forEach(builder => {
+    const rows = builder.querySelector('[data-ingredient-rows]');
+    const template = builder.querySelector('template');
+    const updateRemoveControls = () => {
+      const controls = rows.querySelectorAll('[data-remove-ingredient]');
+      controls.forEach(button => { button.disabled = controls.length === 1; });
+    };
+    builder.querySelector('[data-add-ingredient]')?.addEventListener('click', () => {
+      rows.appendChild(template.content.cloneNode(true));
+      updateRemoveControls();
+    });
+    rows.addEventListener('click', event => {
+      const button = event.target.closest('[data-remove-ingredient]');
+      if (!button || button.disabled) return;
+      button.closest('.ingredient-row')?.remove();
+      updateRemoveControls();
+    });
+    updateRemoveControls();
+  });
 })();

@@ -1178,16 +1178,14 @@ def admin_processing_product_create(request: Request, name: str=Form(...), icon:
 
 
 @app.post('/admin/processing/recipes/create')
-def admin_processing_recipe_create(request: Request, building_key: str=Form(...), name: str=Form(...), icon: str=Form('⚙️'), description: str=Form(''), required_level: int=Form(...), duration_minutes: int=Form(...), fee: int=Form(0), output_key: str=Form(...), output_quantity: int=Form(...), inputs: str=Form(...)):
+def admin_processing_recipe_create(request: Request, building_key: str=Form(...), name: str=Form(...), icon: str=Form('⚙️'), description: str=Form(''), required_level: int=Form(...), duration_minutes: int=Form(...), fee: int=Form(0), output_key: str=Form(...), output_quantity: int=Form(...), input_key: list[str]=Form(...), input_quantity: list[int]=Form(...)):
     require_admin(request); clean=' '.join(name.split()); key=catalog_key(clean)
     if len(clean)<2 or min(required_level,duration_minutes,output_quantity)<1 or fee<0: raise HTTPException(400,'Enter valid recipe details.')
-    parsed=[]
+    parsed=list(zip(input_key,input_quantity))
     try:
-        for part in inputs.split(','):
-            product,amount=part.strip().split(':',1); amount=int(amount); product=product.strip()
-            if amount<1 or not product: raise ValueError
-            parsed.append((product,amount))
-    except ValueError: raise HTTPException(400,'Inputs must use product_key:quantity, separated by commas.')
+        if not parsed or len(input_key)!=len(input_quantity) or any(not product or int(amount)<1 for product,amount in parsed): raise ValueError
+        if len({product for product,_ in parsed}) != len(parsed): raise ValueError
+    except (TypeError,ValueError): raise HTTPException(400,'Choose an ingredient and positive quantity for every used row.')
     with connection() as db:
         if not db.execute('SELECT 1 FROM processing_building_catalog WHERE building_key=?',(building_key,)).fetchone(): raise HTTPException(400,'Building not found.')
         if not db.execute('SELECT 1 FROM processing_products WHERE product_key=?',(output_key,)).fetchone(): raise HTTPException(400,'Output product not found.')
