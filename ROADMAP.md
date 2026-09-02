@@ -124,3 +124,7 @@ Land expansion administration supports creating custom packages, editing price a
 ### v3.1.7
 
 Retired the reserved fixed-farm-area feature. Existing and new farms use no hidden fixed land allocation, returning that space to available land.
+
+### v3.1.8
+
+Restored the visible next slot-level upgrade action inside each eligible Processing building card.

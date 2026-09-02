@@ -526,6 +526,9 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
         up.slot_count,up.cost,up.required_player_level FROM user_processing_buildings u
         JOIN processing_building_catalog c USING(building_key) JOIN processing_building_upgrades up ON up.building_key=u.building_key
         AND up.building_level=u.building_level+1 AND up.enabled=1 WHERE u.user_id=? ORDER BY c.name""",(user_id,))]
+    upgrades_by_building = {upgrade['id']: upgrade for upgrade in building_upgrades}
+    for building in processing_buildings:
+        building['next_upgrade'] = upgrades_by_building.get(building['id'])
     recipes=[dict(row) for row in db.execute("""SELECT r.*,p.name output_name,p.icon output_icon,p.product_size,p.product_price
         FROM processing_recipes r JOIN processing_products p ON p.product_key=r.output_key WHERE r.enabled=1 ORDER BY r.name""")]
     for recipe in recipes:
