@@ -1409,11 +1409,32 @@ def admin_species(request: Request, species_key: str, product_name: str = Form(.
 @app.post("/admin/expansion/{blocks}")
 def admin_expansion(request: Request, blocks: int, price: int = Form(...), required_level: int|None=Form(None)):
     require_admin(request)
-    if price < 0: raise HTTPException(400, "Invalid price.")
+    if blocks < 1 or price < 0: raise HTTPException(400, "Enter valid land blocks and price.")
     with connection() as db:
         if required_level and not db.execute('SELECT 1 FROM levels WHERE level=? AND enabled=1',(required_level,)).fetchone(): raise HTTPException(400,'Choose an enabled level.')
-        db.execute("UPDATE expansion_prices SET price=?,required_level=? WHERE blocks=?", (price,required_level,blocks))
-    return RedirectResponse("/admin", 303)
+        result=db.execute("UPDATE expansion_prices SET price=?,required_level=? WHERE blocks=?", (price,required_level,blocks))
+        if not result.rowcount: raise HTTPException(404,'Expansion package not found.')
+    return RedirectResponse("/admin#land", 303)
+
+
+@app.post("/admin/expansions/create")
+def admin_expansion_create(request: Request, blocks: int=Form(...), price: int=Form(...), required_level: int|None=Form(None)):
+    require_admin(request)
+    if blocks < 1 or price < 0: raise HTTPException(400,'Enter valid land blocks and price.')
+    with connection() as db:
+        if required_level and not db.execute('SELECT 1 FROM levels WHERE level=? AND enabled=1',(required_level,)).fetchone(): raise HTTPException(400,'Choose an enabled level.')
+        try: db.execute('INSERT INTO expansion_prices(blocks,price,required_level) VALUES (?,?,?)',(blocks,price,required_level))
+        except sqlite3.IntegrityError: raise HTTPException(409,'An expansion with this block amount already exists. Edit the existing package instead.')
+    return RedirectResponse('/admin#land',303)
+
+
+@app.post("/admin/expansion/{blocks}/delete")
+def admin_expansion_delete(request: Request, blocks: int):
+    require_admin(request)
+    with connection() as db:
+        result=db.execute('DELETE FROM expansion_prices WHERE blocks=?',(blocks,))
+        if not result.rowcount: raise HTTPException(404,'Expansion package not found.')
+    return RedirectResponse('/admin#land',303)
 
 
 @app.post("/admin/feed/{feed_key}")

@@ -116,3 +116,7 @@ Processing slot recipe choices display their configured ingredient quantities an
 ### v3.1.5
 
 Inventory upgrade cards show the current inventory land footprint, additional land required for the selected capacity, and resulting total footprint.
+
+### v3.1.6
+
+Land expansion administration supports creating custom packages, editing price and required level, and removing future offers without changing land already owned by farmers.
