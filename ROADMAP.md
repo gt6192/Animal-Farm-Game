@@ -92,3 +92,7 @@ Processing buildings, output products, and recipes are all editable. Unused cata
 ### v3.0.4
 
 Processing catalogue editing is presented in compact, responsive record cards: save and delete/archive actions stay together, while recipe inputs use a dedicated ingredient-builder panel.
+
+### v3.1.0
+
+Processing buildings are one-time purchases. Each building now has its own paid slot-level path, allowing admins to configure the Farmies cost, player-level requirement, and total processing slots for every upgrade level.

@@ -311,8 +311,15 @@ def initialize_database() -> None:
             enabled INTEGER NOT NULL DEFAULT 1)""")
         db.execute("""CREATE TABLE IF NOT EXISTS user_processing_buildings(
             id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,building_key TEXT NOT NULL,
-            purchased_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+            building_level INTEGER NOT NULL DEFAULT 1,purchased_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        try: db.execute("ALTER TABLE user_processing_buildings ADD COLUMN building_level INTEGER NOT NULL DEFAULT 1")
+        except sqlite3.OperationalError: pass
         db.execute("CREATE INDEX IF NOT EXISTS user_processing_buildings_user ON user_processing_buildings(user_id,id)")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS user_processing_buildings_one_per_type ON user_processing_buildings(user_id,building_key)")
+        db.execute("""CREATE TABLE IF NOT EXISTS processing_building_upgrades(
+            building_key TEXT NOT NULL,building_level INTEGER NOT NULL,slot_count INTEGER NOT NULL,cost INTEGER NOT NULL,
+            required_player_level INTEGER NOT NULL DEFAULT 1,enabled INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY(building_key,building_level))""")
         db.execute("""CREATE TABLE IF NOT EXISTS processing_products(
             product_key TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,product_size REAL NOT NULL,
             product_price INTEGER NOT NULL,enabled INTEGER NOT NULL DEFAULT 1)""")
@@ -331,6 +338,8 @@ def initialize_database() -> None:
         db.executemany("INSERT OR IGNORE INTO processing_building_catalog VALUES (?,?,?,?,?,?,?,?,1)",[
             ('packing_station','Packing Station','📦','Pack fresh farm goods for sale.',1200,5,1,2),
             ('dairy_shed','Dairy Shed','🧀','Turn fresh milk into premium cheese.',2500,8,1,3)])
+        db.executemany("INSERT OR IGNORE INTO processing_building_upgrades VALUES (?,?,?,?,?,1)",[
+            ('packing_station',2,2,1500,2),('dairy_shed',2,2,3000,3)])
         db.executemany("INSERT OR IGNORE INTO processing_products VALUES (?,?,?,?,?,1)",[
             ('egg_carton','Egg carton','🥚',1,70),('cheese','Cheese','🧀',1,150)])
         db.executemany("INSERT OR IGNORE INTO processing_recipes VALUES (?,?,?,?,?,?,?,?,?,?,1)",[
@@ -500,11 +509,19 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
         LEFT JOIN fish_seeds s ON s.fish_key=c.fish_key AND s.enabled=1 LEFT JOIN inventory i ON i.user_id=p.user_id AND i.product_key=s.seed_key
         WHERE p.user_id=? ORDER BY p.id""",(user_id,))]
     pond_land = sum(pond["land_blocks"] for pond in ponds)
-    processing_buildings=[dict(row) for row in db.execute("""SELECT u.id,c.*,COUNT(j.id) active_jobs
+    processing_buildings=[dict(row) for row in db.execute("""SELECT u.id,u.building_level,c.*,COALESCE(up.slot_count,c.slot_count) effective_slot_count,COUNT(j.id) active_jobs
         FROM user_processing_buildings u JOIN processing_building_catalog c USING(building_key)
+        LEFT JOIN processing_building_upgrades up ON up.building_key=u.building_key AND up.building_level=u.building_level
         LEFT JOIN processing_jobs j ON j.building_id=u.id AND j.status='processing'
         WHERE u.user_id=? GROUP BY u.id ORDER BY u.id""",(user_id,))]
     processing_buildings_catalog=[dict(row) for row in db.execute("SELECT * FROM processing_building_catalog WHERE enabled=1 ORDER BY required_level,name")]
+    for building in processing_buildings_catalog:
+        owned = db.execute("SELECT 1 FROM user_processing_buildings WHERE user_id=? AND building_key=?",(user_id,building['building_key'])).fetchone()
+        building['owned'] = bool(owned)
+    building_upgrades=[dict(row) for row in db.execute("""SELECT u.id,u.building_key,u.building_level,c.name,c.icon,up.building_level next_level,
+        up.slot_count,up.cost,up.required_player_level FROM user_processing_buildings u
+        JOIN processing_building_catalog c USING(building_key) JOIN processing_building_upgrades up ON up.building_key=u.building_key
+        AND up.building_level=u.building_level+1 AND up.enabled=1 WHERE u.user_id=? ORDER BY c.name""",(user_id,))]
     recipes=[dict(row) for row in db.execute("""SELECT r.*,p.name output_name,p.icon output_icon,p.product_size,p.product_price
         FROM processing_recipes r JOIN processing_products p ON p.product_key=r.output_key WHERE r.enabled=1 ORDER BY r.name""")]
     for recipe in recipes:
@@ -555,7 +572,7 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
             "cargo": cargo, "cargo_capacity": cargo_capacity, "cargo_revenue": cargo_revenue,
             "ledger": ledger, "expansions": expansions,
             "feeds": feeds, "fish_species":fish_species,"fish_seeds":fish_seeds,"ponds":ponds,"pond_land":pond_land,"pond_limit":pond_limit,
-            "processing_buildings":processing_buildings,"processing_buildings_catalog":processing_buildings_catalog,"processing_recipes":recipes,"processing_jobs":processing_jobs,"processing_land":processing_land,
+            "processing_buildings":processing_buildings,"processing_buildings_catalog":processing_buildings_catalog,"building_upgrades":building_upgrades,"processing_recipes":recipes,"processing_jobs":processing_jobs,"processing_land":processing_land,
             "pond_catalog":[dict(row) for row in db.execute("SELECT * FROM pond_catalog WHERE enabled=1 ORDER BY pond_level")],
             "settings": game_settings, "xp": wallet, "upgrades": upgrades, "transport_name":transport_name,"transport_icon":transport_icon,
             "transport_duration":duration_label(farm['transport_seconds']),"now_iso": current.isoformat()}
@@ -901,6 +918,8 @@ def buy_processing_building(request: Request, building_key: str=Form(...)):
     with connection() as db:
         state=snapshot(db,uid); building=db.execute("SELECT * FROM processing_building_catalog WHERE building_key=? AND enabled=1",(building_key,)).fetchone()
         if not building: raise HTTPException(404,'Processing building not found.')
+        if db.execute("SELECT 1 FROM user_processing_buildings WHERE user_id=? AND building_key=?",(uid,building_key)).fetchone():
+            raise HTTPException(409,'You already own this building. Upgrade its slots from the Processing workshop.')
         if state['xp']['highest_level']<building['required_level']: raise HTTPException(403,f"Reach Level {building['required_level']} to buy this building.")
         if state['land_available']<building['land_blocks']: raise HTTPException(400,f"You need {building['land_blocks']} free land blocks.")
         event=f"processing-building:{uuid.uuid4().hex}"; transact(db,uid,-building['cost'],event,f"Purchased {building['name']}")
@@ -909,19 +928,38 @@ def buy_processing_building(request: Request, building_key: str=Form(...)):
     return RedirectResponse('/?open=processing-screen',303)
 
 
+@app.post('/processing/buildings/{building_id}/upgrade')
+def upgrade_processing_building(request: Request, building_id: int):
+    uid=user_id(request)
+    with connection() as db:
+        state=snapshot(db,uid)
+        building=db.execute("SELECT u.*,c.name,c.building_key FROM user_processing_buildings u JOIN processing_building_catalog c USING(building_key) WHERE u.id=? AND u.user_id=?",(building_id,uid)).fetchone()
+        if not building: raise HTTPException(404,'Processing building not found.')
+        upgrade=db.execute("SELECT * FROM processing_building_upgrades WHERE building_key=? AND building_level=? AND enabled=1",(building['building_key'],building['building_level']+1)).fetchone()
+        if not upgrade: raise HTTPException(400,'No next building upgrade is available.')
+        if state['xp']['highest_level']<upgrade['required_player_level']: raise HTTPException(403,f"Reach Level {upgrade['required_player_level']} to upgrade this building.")
+        event=f"processing-building-upgrade:{building_id}:{upgrade['building_level']}"
+        transact(db,uid,-upgrade['cost'],event,f"Upgraded {building['name']} to building level {upgrade['building_level']}")
+        grant_xp_for_farmies(db,uid,event,'development',upgrade['cost'],f"Upgraded {building['name']}")
+        result=db.execute("UPDATE user_processing_buildings SET building_level=? WHERE id=? AND user_id=? AND building_level=?",(upgrade['building_level'],building_id,uid,building['building_level']))
+        if not result.rowcount: raise HTTPException(409,'This building was already upgraded. Refresh and try again.')
+    return RedirectResponse('/?open=processing-screen',303)
+
+
 @app.post('/processing/jobs/start')
 def start_processing_job(request: Request, building_id: int=Form(...), recipe_key: str=Form(...), batches: int=Form(1)):
     uid=user_id(request)
     if batches<1 or batches>100: raise HTTPException(400,'Choose a valid batch quantity.')
     with connection() as db:
-        state=snapshot(db,uid); building=db.execute("""SELECT u.id,c.* FROM user_processing_buildings u
+        state=snapshot(db,uid); building=db.execute("""SELECT u.id,u.building_level,c.* FROM user_processing_buildings u
             JOIN processing_building_catalog c USING(building_key) WHERE u.id=? AND u.user_id=?""",(building_id,uid)).fetchone()
         recipe=db.execute("""SELECT r.*,p.name output_name,p.icon output_icon,p.product_size,p.product_price FROM processing_recipes r
             JOIN processing_products p ON p.product_key=r.output_key WHERE r.recipe_key=? AND r.enabled=1""",(recipe_key,)).fetchone()
         if not building or not recipe or recipe['building_key']!=building['building_key']: raise HTTPException(400,'Choose a recipe for this building.')
         if state['xp']['highest_level']<max(building['required_level'],recipe['required_level']): raise HTTPException(403,'Your player level is too low for this recipe.')
         active=db.execute("SELECT COUNT(*) FROM processing_jobs WHERE building_id=? AND status='processing'",(building_id,)).fetchone()[0]
-        if active>=building['slot_count']: raise HTTPException(409,'All processing slots are busy.')
+        effective_slots=(db.execute("SELECT slot_count FROM processing_building_upgrades WHERE building_key=? AND building_level=?",(building['building_key'],building['building_level'])).fetchone() or building)['slot_count']
+        if active>=effective_slots: raise HTTPException(409,'All processing slots are busy.')
         inputs=[dict(row) for row in db.execute("SELECT * FROM processing_recipe_inputs WHERE recipe_key=?",(recipe_key,))]
         if not inputs: raise HTTPException(400,'This recipe has no inputs configured.')
         for item in inputs:
@@ -1126,6 +1164,7 @@ def admin_page(request: Request, error: str = ""):
             FROM pond_cycles x JOIN user_ponds p ON p.id=x.pond_id JOIN users u ON u.id=x.user_id
             JOIN fish_species f ON f.fish_key=x.fish_key ORDER BY x.started_at DESC LIMIT 200""")]
         processing_buildings=[dict(row) for row in db.execute("SELECT * FROM processing_building_catalog ORDER BY name")]
+        processing_building_upgrades=[dict(row) for row in db.execute("SELECT * FROM processing_building_upgrades ORDER BY building_key,building_level")]
         processing_products=[dict(row) for row in db.execute("SELECT * FROM processing_products ORDER BY name")]
         processing_recipes=[dict(row) for row in db.execute("SELECT r.*,GROUP_CONCAT(i.product_key || ' × ' || i.quantity, ', ') inputs FROM processing_recipes r LEFT JOIN processing_recipe_inputs i USING(recipe_key) GROUP BY r.recipe_key ORDER BY r.name")]
         for recipe in processing_recipes:
@@ -1135,7 +1174,7 @@ def admin_page(request: Request, error: str = ""):
             JOIN processing_building_catalog b ON b.building_key=ub.building_key ORDER BY j.started_at DESC LIMIT 200""")]
         product_catalog=[dict(row) for row in db.execute("""SELECT product_key,product_name name,product_icon icon FROM species
             UNION ALL SELECT product_key,product_name,product_icon FROM fish_species UNION ALL SELECT product_key,name,icon FROM processing_products ORDER BY name""")]
-    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"fish_species":fish_species,"fish_seeds":fish_seeds,"pond_catalog":pond_catalog,"pond_limits":pond_limits,"user_ponds":user_ponds,"pond_cycles":pond_cycles,"processing_buildings":processing_buildings,"processing_products":processing_products,"processing_recipes":processing_recipes,"processing_jobs":processing_jobs,"product_catalog":product_catalog,"identity": request.state.identity, "error": error})
+    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"fish_species":fish_species,"fish_seeds":fish_seeds,"pond_catalog":pond_catalog,"pond_limits":pond_limits,"user_ponds":user_ponds,"pond_cycles":pond_cycles,"processing_buildings":processing_buildings,"processing_building_upgrades":processing_building_upgrades,"processing_products":processing_products,"processing_recipes":processing_recipes,"processing_jobs":processing_jobs,"product_catalog":product_catalog,"identity": request.state.identity, "error": error})
 
 
 @app.post("/admin/settings")
@@ -1166,6 +1205,23 @@ def admin_processing_building_create(request: Request, name: str=Form(...), icon
         if not db.execute('SELECT 1 FROM levels WHERE level=?',(required_level,)).fetchone(): raise HTTPException(400,'Choose an existing level.')
         try: db.execute('INSERT INTO processing_building_catalog VALUES (?,?,?,?,?,?,?,?,1)',(key,clean,icon.strip()[:12] or '🏭',description.strip()[:240],cost,land_blocks,slot_count,required_level))
         except sqlite3.IntegrityError: raise HTTPException(409,'That processing building already exists.')
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/building-upgrades/save')
+def admin_processing_building_upgrade_save(request: Request, building_key: str=Form(...), building_level: int=Form(...), slot_count: int=Form(...), cost: int=Form(...), required_player_level: int=Form(...), enabled: bool=Form(False)):
+    require_admin(request)
+    if min(building_level,slot_count,required_player_level)<2 or cost<0: raise HTTPException(400,'Enter a valid building upgrade level, slots, cost, and player level.')
+    with connection() as db:
+        base=db.execute('SELECT slot_count FROM processing_building_catalog WHERE building_key=?',(building_key,)).fetchone()
+        if not base: raise HTTPException(404,'Building not found.')
+        if not db.execute('SELECT 1 FROM levels WHERE level=?',(required_player_level,)).fetchone(): raise HTTPException(400,'Choose an existing player level.')
+        previous=db.execute('SELECT slot_count FROM processing_building_upgrades WHERE building_key=? AND building_level=?',(building_key,building_level-1)).fetchone()
+        if building_level > 2 and not previous: raise HTTPException(400,'Create the previous building level first.')
+        previous_slots=previous['slot_count'] if previous else base['slot_count']
+        if slot_count<=previous_slots: raise HTTPException(400,'Each upgrade must increase the previous level’s processing slots.')
+        db.execute('''INSERT INTO processing_building_upgrades(building_key,building_level,slot_count,cost,required_player_level,enabled)
+            VALUES (?,?,?,?,?,?) ON CONFLICT(building_key,building_level) DO UPDATE SET slot_count=excluded.slot_count,cost=excluded.cost,required_player_level=excluded.required_player_level,enabled=excluded.enabled''',(building_key,building_level,slot_count,cost,required_player_level,1 if enabled else 0))
     return RedirectResponse('/admin#processing',303)
 
 
