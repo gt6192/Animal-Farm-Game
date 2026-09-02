@@ -157,6 +157,16 @@ def dt(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def duration_label(total_seconds: int) -> str:
+    total_seconds = max(0, int(total_seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours and minutes: return f"{hours}h {minutes}m"
+    if hours: return f"{hours}h"
+    if minutes: return f"{minutes}m"
+    return f"{seconds}s"
+
+
 def initialize_database() -> None:
     with connection() as db:
         db.execute("PRAGMA journal_mode=WAL")
@@ -492,7 +502,8 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
             "ledger": ledger, "expansions": expansions,
             "feeds": feeds, "fish_species":fish_species,"fish_seeds":fish_seeds,"ponds":ponds,"pond_land":pond_land,"pond_limit":pond_limit,
             "pond_catalog":[dict(row) for row in db.execute("SELECT * FROM pond_catalog WHERE enabled=1 ORDER BY pond_level")],
-            "settings": game_settings, "xp": wallet, "upgrades": upgrades, "transport_name":transport_name,"transport_icon":transport_icon,"now_iso": current.isoformat()}
+            "settings": game_settings, "xp": wallet, "upgrades": upgrades, "transport_name":transport_name,"transport_icon":transport_icon,
+            "transport_duration":duration_label(farm['transport_seconds']),"now_iso": current.isoformat()}
 
 
 @app.middleware("http")
