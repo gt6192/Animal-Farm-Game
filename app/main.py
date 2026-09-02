@@ -529,7 +529,11 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
             UNION ALL SELECT product_key,product_name,product_icon FROM fish_species UNION ALL SELECT product_key,name,icon FROM processing_products)
             SELECT i.product_key,i.quantity,p.name,p.icon,COALESCE(stock.quantity,0) stock FROM processing_recipe_inputs i
             JOIN products p USING(product_key) LEFT JOIN inventory stock ON stock.user_id=? AND stock.product_key=i.product_key WHERE i.recipe_key=?""",(user_id,recipe['recipe_key']))]
-    processing_jobs=[dict(row) for row in db.execute("SELECT * FROM processing_jobs WHERE user_id=? ORDER BY started_at DESC LIMIT 30",(user_id,))]
+    processing_jobs=[dict(row) for row in db.execute("SELECT * FROM processing_jobs WHERE user_id=? AND status IN ('processing','ready') ORDER BY started_at",(user_id,))]
+    for building in processing_buildings:
+        assigned=[job for job in processing_jobs if job['building_id']==building['id']]
+        building['slots']=[{'number':number,'job':assigned[number-1] if number<=len(assigned) else None}
+            for number in range(1,building['effective_slot_count']+1)]
     processing_land=sum(building['land_blocks'] for building in processing_buildings)
     inventory_used = sum(item["quantity"] * item["product_size"] for item in inventory)
     inventory_items = [item for item in inventory if item["quantity"] > 0]
@@ -947,9 +951,8 @@ def upgrade_processing_building(request: Request, building_id: int):
 
 
 @app.post('/processing/jobs/start')
-def start_processing_job(request: Request, building_id: int=Form(...), recipe_key: str=Form(...), batches: int=Form(1)):
+def start_processing_job(request: Request, building_id: int=Form(...), recipe_key: str=Form(...)):
     uid=user_id(request)
-    if batches<1 or batches>100: raise HTTPException(400,'Choose a valid batch quantity.')
     with connection() as db:
         state=snapshot(db,uid); building=db.execute("""SELECT u.id,u.building_level,c.* FROM user_processing_buildings u
             JOIN processing_building_catalog c USING(building_key) WHERE u.id=? AND u.user_id=?""",(building_id,uid)).fetchone()
@@ -957,24 +960,24 @@ def start_processing_job(request: Request, building_id: int=Form(...), recipe_ke
             JOIN processing_products p ON p.product_key=r.output_key WHERE r.recipe_key=? AND r.enabled=1""",(recipe_key,)).fetchone()
         if not building or not recipe or recipe['building_key']!=building['building_key']: raise HTTPException(400,'Choose a recipe for this building.')
         if state['xp']['highest_level']<max(building['required_level'],recipe['required_level']): raise HTTPException(403,'Your player level is too low for this recipe.')
-        active=db.execute("SELECT COUNT(*) FROM processing_jobs WHERE building_id=? AND status='processing'",(building_id,)).fetchone()[0]
+        active=db.execute("SELECT COUNT(*) FROM processing_jobs WHERE building_id=? AND status IN ('processing','ready')",(building_id,)).fetchone()[0]
         effective_slots=(db.execute("SELECT slot_count FROM processing_building_upgrades WHERE building_key=? AND building_level=?",(building['building_key'],building['building_level'])).fetchone() or building)['slot_count']
         if active>=effective_slots: raise HTTPException(409,'All processing slots are busy.')
         inputs=[dict(row) for row in db.execute("SELECT * FROM processing_recipe_inputs WHERE recipe_key=?",(recipe_key,))]
         if not inputs: raise HTTPException(400,'This recipe has no inputs configured.')
         for item in inputs:
             stock=db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(uid,item['product_key'])).fetchone()
-            if not stock or stock['quantity']<item['quantity']*batches: raise HTTPException(400,f"Not enough {item['product_key'].replace('_',' ')}.")
+            if not stock or stock['quantity']<item['quantity']: raise HTTPException(400,f"Not enough {item['product_key'].replace('_',' ')}.")
         event=f"processing-fee:{uuid.uuid4().hex}"
-        if recipe['fee']*batches: transact(db,uid,-recipe['fee']*batches,event,f"Processing fee: {recipe['name']}")
+        if recipe['fee']: transact(db,uid,-recipe['fee'],event,f"Processing fee: {recipe['name']}")
         snapshot_inputs=[]
         for item in inputs:
-            amount=item['quantity']*batches; db.execute("UPDATE inventory SET quantity=quantity-? WHERE user_id=? AND product_key=?",(amount,uid,item['product_key']))
+            amount=item['quantity']; db.execute("UPDATE inventory SET quantity=quantity-? WHERE user_id=? AND product_key=?",(amount,uid,item['product_key']))
             snapshot_inputs.append({'product_key':item['product_key'],'quantity':amount})
         started=now(); ready=started+timedelta(seconds=recipe['duration_seconds'])
         db.execute("""INSERT INTO processing_jobs(id,user_id,building_id,recipe_key,status,input_snapshot,output_key,output_name,output_icon,output_size,output_price,output_quantity,fee,started_at,ready_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
-            uuid.uuid4().hex,uid,building_id,recipe_key,'processing',json.dumps(snapshot_inputs),recipe['output_key'],recipe['output_name'],recipe['output_icon'],recipe['product_size'],recipe['product_price'],recipe['output_quantity']*batches,recipe['fee']*batches,started.isoformat(),ready.isoformat()))
+            uuid.uuid4().hex,uid,building_id,recipe_key,'processing',json.dumps(snapshot_inputs),recipe['output_key'],recipe['output_name'],recipe['output_icon'],recipe['product_size'],recipe['product_price'],recipe['output_quantity'],recipe['fee'],started.isoformat(),ready.isoformat()))
     return RedirectResponse('/?open=processing-screen',303)
 
 

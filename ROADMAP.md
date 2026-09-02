@@ -96,3 +96,7 @@ Processing catalogue editing is presented in compact, responsive record cards: s
 ### v3.1.0
 
 Processing buildings are one-time purchases. Each building now has its own paid slot-level path, allowing admins to configure the Farmies cost, player-level requirement, and total processing slots for every upgrade level.
+
+### v3.1.1
+
+The processing workshop uses a per-building slot board. Each idle slot selects and starts exactly one recipe output; active and ready jobs remain in their own slot until collected, with no separate processing-history panel.
