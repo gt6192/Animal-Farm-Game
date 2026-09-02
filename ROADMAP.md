@@ -104,3 +104,7 @@ The processing workshop uses a per-building slot board. Each idle slot selects a
 ### v3.1.2
 
 The Processing admin workspace is grouped into focused sub-tabs for Buildings, Slot levels, Products, Recipes, and Job audit.
+
+### v3.1.3
+
+Fixed Processing admin sub-tab visibility so only the selected panel is displayed.
