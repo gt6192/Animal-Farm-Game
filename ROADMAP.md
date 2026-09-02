@@ -84,3 +84,7 @@ The Processing recipe editor uses a dynamic ingredient builder with product drop
 ### v3.0.2
 
 Animal catalog editing includes product display names and icons, while preserving each stable product key for existing inventory and delivery records.
+
+### v3.0.3
+
+Processing buildings, output products, and recipes are all editable. Unused catalog entries may be deleted; records referenced by owned buildings, jobs, recipes, or inventory are safely archived by disabling them so player data and audit history remain valid.

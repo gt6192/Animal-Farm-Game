@@ -1128,6 +1128,8 @@ def admin_page(request: Request, error: str = ""):
         processing_buildings=[dict(row) for row in db.execute("SELECT * FROM processing_building_catalog ORDER BY name")]
         processing_products=[dict(row) for row in db.execute("SELECT * FROM processing_products ORDER BY name")]
         processing_recipes=[dict(row) for row in db.execute("SELECT r.*,GROUP_CONCAT(i.product_key || ' × ' || i.quantity, ', ') inputs FROM processing_recipes r LEFT JOIN processing_recipe_inputs i USING(recipe_key) GROUP BY r.recipe_key ORDER BY r.name")]
+        for recipe in processing_recipes:
+            recipe['input_rows']=[dict(row) for row in db.execute("SELECT product_key,quantity FROM processing_recipe_inputs WHERE recipe_key=? ORDER BY product_key",(recipe['recipe_key'],))]
         processing_jobs=[dict(row) for row in db.execute("""SELECT j.*,u.name farmer_name,b.name building_name FROM processing_jobs j
             JOIN users u ON u.id=j.user_id JOIN user_processing_buildings ub ON ub.id=j.building_id
             JOIN processing_building_catalog b ON b.building_key=ub.building_key ORDER BY j.started_at DESC LIMIT 200""")]
@@ -1216,6 +1218,59 @@ def admin_processing_product_edit(request: Request, product_key: str, name: str=
     with connection() as db:
         result=db.execute('UPDATE processing_products SET name=?,icon=?,product_size=?,product_price=?,enabled=? WHERE product_key=?',(clean,icon.strip()[:12] or '📦',product_size,product_price,1 if enabled else 0,product_key))
         if not result.rowcount: raise HTTPException(404,'Product not found.')
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/buildings/{building_key}/delete')
+def admin_processing_building_delete(request: Request, building_key: str):
+    require_admin(request)
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM processing_building_catalog WHERE building_key=?',(building_key,)).fetchone(): raise HTTPException(404,'Building not found.')
+        used = db.execute('SELECT 1 FROM user_processing_buildings WHERE building_key=? LIMIT 1',(building_key,)).fetchone() or db.execute('SELECT 1 FROM processing_recipes WHERE building_key=? LIMIT 1',(building_key,)).fetchone()
+        if used: db.execute('UPDATE processing_building_catalog SET enabled=0 WHERE building_key=?',(building_key,))
+        else: db.execute('DELETE FROM processing_building_catalog WHERE building_key=?',(building_key,))
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/products/{product_key}/delete')
+def admin_processing_product_delete(request: Request, product_key: str):
+    require_admin(request)
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM processing_products WHERE product_key=?',(product_key,)).fetchone(): raise HTTPException(404,'Product not found.')
+        used = db.execute('SELECT 1 FROM inventory WHERE product_key=? LIMIT 1',(product_key,)).fetchone() or db.execute('SELECT 1 FROM processing_recipes WHERE output_key=? LIMIT 1',(product_key,)).fetchone() or db.execute('SELECT 1 FROM processing_recipe_inputs WHERE product_key=? LIMIT 1',(product_key,)).fetchone() or db.execute('SELECT 1 FROM processing_jobs WHERE output_key=? LIMIT 1',(product_key,)).fetchone()
+        if used: db.execute('UPDATE processing_products SET enabled=0 WHERE product_key=?',(product_key,))
+        else: db.execute('DELETE FROM processing_products WHERE product_key=?',(product_key,))
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/recipes/{recipe_key}')
+def admin_processing_recipe_edit(request: Request, recipe_key: str, building_key: str=Form(...), name: str=Form(...), icon: str=Form('⚙️'), description: str=Form(''), required_level: int=Form(...), duration_minutes: int=Form(...), fee: int=Form(0), output_key: str=Form(...), output_quantity: int=Form(...), input_key: list[str]=Form(...), input_quantity: list[int]=Form(...), enabled: bool=Form(False)):
+    require_admin(request); clean=' '.join(name.split()); parsed=list(zip(input_key,input_quantity))
+    if len(clean)<2 or min(required_level,duration_minutes,output_quantity)<1 or fee<0 or not parsed or len(input_key)!=len(input_quantity) or any(not key or amount<1 for key,amount in parsed) or len({key for key,_ in parsed})!=len(parsed): raise HTTPException(400,'Choose unique ingredients with valid quantities.')
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM processing_building_catalog WHERE building_key=?',(building_key,)).fetchone(): raise HTTPException(400,'Building not found.')
+        if not db.execute('SELECT 1 FROM processing_products WHERE product_key=?',(output_key,)).fetchone(): raise HTTPException(400,'Output product not found.')
+        if not db.execute('SELECT 1 FROM levels WHERE level=?',(required_level,)).fetchone(): raise HTTPException(400,'Level not found.')
+        for product,_ in parsed:
+            if not db.execute("SELECT 1 FROM (SELECT product_key FROM species UNION SELECT product_key FROM fish_species UNION SELECT product_key FROM processing_products) WHERE product_key=?",(product,)).fetchone(): raise HTTPException(400,f'Unknown input product: {product}')
+        result=db.execute('UPDATE processing_recipes SET building_key=?,name=?,icon=?,description=?,required_level=?,duration_seconds=?,fee=?,output_key=?,output_quantity=?,enabled=? WHERE recipe_key=?',(building_key,clean,icon.strip()[:12] or '⚙️',description.strip()[:240],required_level,duration_minutes*60,fee,output_key,output_quantity,1 if enabled else 0,recipe_key))
+        if not result.rowcount: raise HTTPException(404,'Recipe not found.')
+        db.execute('DELETE FROM processing_recipe_inputs WHERE recipe_key=?',(recipe_key,))
+        db.executemany('INSERT INTO processing_recipe_inputs VALUES (?,?,?)',[(recipe_key,key,quantity) for key,quantity in parsed])
+    return RedirectResponse('/admin#processing',303)
+
+
+@app.post('/admin/processing/recipes/{recipe_key}/delete')
+def admin_processing_recipe_delete(request: Request, recipe_key: str):
+    require_admin(request)
+    with connection() as db:
+        recipe=db.execute('SELECT 1 FROM processing_recipes WHERE recipe_key=?',(recipe_key,)).fetchone()
+        if not recipe: raise HTTPException(404,'Recipe not found.')
+        if db.execute('SELECT 1 FROM processing_jobs WHERE recipe_key=? LIMIT 1',(recipe_key,)).fetchone():
+            db.execute('UPDATE processing_recipes SET enabled=0 WHERE recipe_key=?',(recipe_key,))
+        else:
+            db.execute('DELETE FROM processing_recipe_inputs WHERE recipe_key=?',(recipe_key,))
+            db.execute('DELETE FROM processing_recipes WHERE recipe_key=?',(recipe_key,))
     return RedirectResponse('/admin#processing',303)
 
 
