@@ -108,3 +108,7 @@ The Processing admin workspace is grouped into focused sub-tabs for Buildings, S
 ### v3.1.3
 
 Fixed Processing admin sub-tab visibility so only the selected panel is displayed.
+
+### v3.1.4
+
+Processing slot recipe choices display their configured ingredient quantities and output, rather than duplicating the recipe title.
