@@ -267,9 +267,56 @@ def initialize_database() -> None:
         if not db.execute("SELECT 1 FROM land_expansion_catalog LIMIT 1").fetchone():
             legacy = db.execute("SELECT blocks,price,required_level FROM expansion_prices ORDER BY blocks").fetchall()
             db.executemany("INSERT INTO land_expansion_catalog(blocks,price,required_level) VALUES (?,?,?)", legacy)
-        for offer in db.execute("SELECT id,blocks FROM land_expansion_catalog").fetchall():
-            db.execute("""INSERT OR IGNORE INTO user_land_expansions(user_id,catalog_id)
-                SELECT user_id,? FROM farmies_ledger WHERE reason=?""",(offer['id'],f"Purchased {offer['blocks']} land blocks"))
+        # Older land purchases used a generic ledger description such as
+        # "Purchased 50 land blocks".  A player can now have several distinct
+        # 50-block offers, so the description cannot identify the offer.  The
+        # transaction event does (`land:<user id>:<offer id>`).  Repair and
+        # backfill only those old generic entries using that unique identifier.
+        # This also removes the previous incorrect fan-out that marked every
+        # same-sized offer as owned.
+        catalog_by_id = {row["id"]: dict(row) for row in db.execute(
+            "SELECT id,blocks FROM land_expansion_catalog"
+        ).fetchall()}
+        legacy_land_rows = db.execute("""
+            SELECT user_id,event_key,reason FROM farmies_ledger
+            WHERE reason GLOB 'Purchased * land blocks'
+        """).fetchall()
+        legacy_by_user_and_blocks = {}
+        for entry in legacy_land_rows:
+            words = entry["reason"].split()
+            if len(words) != 4 or not words[1].isdigit():
+                continue
+            blocks = int(words[1])
+            legacy_by_user_and_blocks.setdefault((entry["user_id"], blocks), []).append(entry["event_key"])
+        for (legacy_user_id, blocks), event_keys in legacy_by_user_and_blocks.items():
+            offers = [offer_id for offer_id, offer in catalog_by_id.items() if offer["blocks"] == blocks]
+            if not offers:
+                continue
+            mapped_offer_ids = []
+            for event_key in event_keys:
+                try:
+                    offer_id = int(event_key.rsplit(":", 1)[1])
+                except (IndexError, ValueError):
+                    continue
+                if offer_id in offers and offer_id not in mapped_offer_ids:
+                    mapped_offer_ids.append(offer_id)
+            # If an entry predates per-offer event keys, retain it against the
+            # earliest available offer rather than marking all equal-sized
+            # offers as purchased.
+            for offer_id in sorted(offers):
+                if len(mapped_offer_ids) >= len(event_keys):
+                    break
+                if offer_id not in mapped_offer_ids:
+                    mapped_offer_ids.append(offer_id)
+            placeholders = ",".join("?" for _ in offers)
+            db.execute(
+                f"DELETE FROM user_land_expansions WHERE user_id=? AND catalog_id IN ({placeholders})",
+                (legacy_user_id, *offers),
+            )
+            db.executemany(
+                "INSERT OR IGNORE INTO user_land_expansions(user_id,catalog_id) VALUES (?,?)",
+                [(legacy_user_id, offer_id) for offer_id in mapped_offer_ids],
+            )
         db.execute("CREATE TABLE IF NOT EXISTS levels(level INTEGER PRIMARY KEY,name TEXT NOT NULL,xp_required INTEGER NOT NULL UNIQUE,enabled INTEGER NOT NULL DEFAULT 1)")
         db.executemany("INSERT OR IGNORE INTO levels VALUES (?,?,?,1)", [(1,'Farm Starter',0),(2,'Growing Farmer',100)])
         db.execute("UPDATE species SET required_level=1 WHERE species_key IN ('hen','goat') AND required_level IS NULL")

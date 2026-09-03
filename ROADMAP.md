@@ -140,3 +140,7 @@ Land expansion offers are individually configurable by player level, block amoun
 ### v3.2.1
 
 Marketplace animal cards use a compact feed badge with intentional spacing, keeping nutrition information readable without crowding the product and purchase details.
+
+### v3.2.2
+
+Land-offer ownership is recorded per unique offer rather than per shared block amount. Legacy purchases are safely reconciled so buying one 50-block offer does not mark every 50-block offer as owned.
