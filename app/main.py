@@ -512,6 +512,11 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
         FROM user_ponds p JOIN pond_catalog c ON c.pond_level=p.pond_level JOIN fish_species f ON f.fish_key=c.fish_key
         LEFT JOIN fish_seeds s ON s.fish_key=c.fish_key AND s.enabled=1 LEFT JOIN inventory i ON i.user_id=p.user_id AND i.product_key=s.seed_key
         WHERE p.user_id=? ORDER BY p.id""",(user_id,))]
+    for pond in ponds:
+        target = db.execute("SELECT * FROM pond_catalog WHERE enabled=1 AND pond_level>? ORDER BY pond_level LIMIT 1",(pond['pond_level'],)).fetchone()
+        pond['next_upgrade'] = dict(target) if target else None
+        if target:
+            pond['upgrade_land_needed'] = max(0, target['land_blocks'] - pond['land_blocks'])
     pond_land = sum(pond["land_blocks"] for pond in ponds)
     processing_buildings=[dict(row) for row in db.execute("""SELECT u.id,u.building_level,c.*,COALESCE(up.slot_count,c.slot_count) effective_slot_count,COUNT(j.id) active_jobs
         FROM user_processing_buildings u JOIN processing_building_catalog c USING(building_key)
