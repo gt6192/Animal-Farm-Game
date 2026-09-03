@@ -136,3 +136,7 @@ Fishery pond cards show their next upgrade throughout the pond lifecycle, explai
 ### v3.2.0
 
 Land expansion offers are individually configurable by player level, block amount, and Farmies price. Each offer can be purchased once per farmer, including offers with the same block amount at different levels. Marketplace animal cards show their assigned feed.
+
+### v3.2.1
+
+Marketplace animal cards use a compact feed badge with intentional spacing, keeping nutrition information readable without crowding the product and purchase details.
