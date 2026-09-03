@@ -258,6 +258,18 @@ def initialize_database() -> None:
         expansion_columns={row['name'] for row in db.execute('PRAGMA table_info(expansion_prices)')}
         if 'required_level' not in expansion_columns: db.execute('ALTER TABLE expansion_prices ADD COLUMN required_level INTEGER')
         db.execute('UPDATE expansion_prices SET required_level=2 WHERE blocks=50 AND required_level IS NULL')
+        db.execute("""CREATE TABLE IF NOT EXISTS land_expansion_catalog(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,blocks INTEGER NOT NULL CHECK(blocks>0),price INTEGER NOT NULL CHECK(price>=0),
+            required_level INTEGER,enabled INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS user_land_expansions(
+            user_id INTEGER NOT NULL,catalog_id INTEGER NOT NULL,purchased_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(user_id,catalog_id))""")
+        if not db.execute("SELECT 1 FROM land_expansion_catalog LIMIT 1").fetchone():
+            legacy = db.execute("SELECT blocks,price,required_level FROM expansion_prices ORDER BY blocks").fetchall()
+            db.executemany("INSERT INTO land_expansion_catalog(blocks,price,required_level) VALUES (?,?,?)", legacy)
+        for offer in db.execute("SELECT id,blocks FROM land_expansion_catalog").fetchall():
+            db.execute("""INSERT OR IGNORE INTO user_land_expansions(user_id,catalog_id)
+                SELECT user_id,? FROM farmies_ledger WHERE reason=?""",(offer['id'],f"Purchased {offer['blocks']} land blocks"))
         db.execute("CREATE TABLE IF NOT EXISTS levels(level INTEGER PRIMARY KEY,name TEXT NOT NULL,xp_required INTEGER NOT NULL UNIQUE,enabled INTEGER NOT NULL DEFAULT 1)")
         db.executemany("INSERT OR IGNORE INTO levels VALUES (?,?,?,1)", [(1,'Farm Starter',0),(2,'Growing Farmer',100)])
         db.execute("UPDATE species SET required_level=1 WHERE species_key IN ('hen','goat') AND required_level IS NULL")
@@ -562,7 +574,9 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     cargo_capacity = sum(item["capacity_used"] for item in cargo)
     cargo_revenue = sum(item["revenue"] for item in cargo)
     ledger = [dict(row) for row in db.execute("SELECT * FROM farmies_ledger WHERE user_id=? ORDER BY id DESC LIMIT 20", (user_id,))]
-    expansions = [dict(row) for row in db.execute("SELECT * FROM expansion_prices ORDER BY blocks")]
+    expansions = [dict(row) for row in db.execute("""SELECT c.*,CASE WHEN u.catalog_id IS NULL THEN 0 ELSE 1 END owned
+        FROM land_expansion_catalog c LEFT JOIN user_land_expansions u ON u.catalog_id=c.id AND u.user_id=?
+        WHERE c.enabled=1 ORDER BY c.required_level,c.blocks,c.id""",(user_id,))]
     game_settings = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM settings")}
     ensure_xp_wallet(db,user_id)
     wallet = dict(db.execute("SELECT * FROM xp_wallets WHERE user_id=?",(user_id,)).fetchone())
@@ -690,18 +704,21 @@ def name_farm(request: Request, farm_name: str = Form(...)):
 
 
 @app.post("/farm/expand")
-def expand_farm(request: Request, blocks: int = Form(...)):
+def expand_farm(request: Request, expansion_id: int = Form(...)):
     uid = user_id(request)
     with connection() as db:
-        row = db.execute("SELECT price,required_level FROM expansion_prices WHERE blocks=?", (blocks,)).fetchone()
-        if not row: raise HTTPException(400, "Invalid expansion.")
+        row = db.execute("SELECT * FROM land_expansion_catalog WHERE id=? AND enabled=1", (expansion_id,)).fetchone()
+        if not row: raise HTTPException(400, "This land expansion is no longer available.")
+        if db.execute("SELECT 1 FROM user_land_expansions WHERE user_id=? AND catalog_id=?",(uid,expansion_id)).fetchone():
+            raise HTTPException(409, "You already own this land expansion.")
         ensure_xp_wallet(db,uid); level=db.execute('SELECT highest_level FROM xp_wallets WHERE user_id=?',(uid,)).fetchone()[0]
         if row['required_level'] is None: raise HTTPException(403,'This land expansion does not have an unlock level yet.')
         if level<row['required_level']: raise HTTPException(403,f"Reach Level {row['required_level']} to buy this land expansion.")
-        event = f"land:{uuid.uuid4().hex}"
-        transact(db, uid, -row["price"], event, f"Purchased {blocks} land blocks")
-        grant_xp_for_farmies(db,uid,event,'development',row['price'],f"Purchased {blocks} land blocks")
-        db.execute("UPDATE farms SET total_blocks=total_blocks+?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?", (blocks, uid))
+        event = f"land:{uid}:{expansion_id}"
+        transact(db, uid, -row["price"], event, f"Purchased {row['blocks']} land blocks")
+        db.execute("INSERT INTO user_land_expansions(user_id,catalog_id) VALUES (?,?)",(uid,expansion_id))
+        grant_xp_for_farmies(db,uid,event,'development',row['price'],f"Purchased {row['blocks']} land blocks")
+        db.execute("UPDATE farms SET total_blocks=total_blocks+?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?", (row['blocks'], uid))
     return RedirectResponse("/", 303)
 
 
@@ -1165,7 +1182,7 @@ def admin_page(request: Request, error: str = ""):
         species = [dict(row) for row in db.execute("SELECT * FROM species ORDER BY name")]
         feeds = [dict(row) for row in db.execute("""SELECT f.*,COALESCE(GROUP_CONCAT(s.name, ', '),'Not assigned') species_name
             FROM feeds f LEFT JOIN species s ON s.feed_key=f.feed_key GROUP BY f.feed_key ORDER BY f.name""")]
-        expansions = [dict(row) for row in db.execute("SELECT * FROM expansion_prices ORDER BY blocks")]
+        expansions = [dict(row) for row in db.execute("SELECT * FROM land_expansion_catalog ORDER BY required_level,blocks,id")]
         levels = [dict(row) for row in db.execute("SELECT * FROM levels ORDER BY level")]
         upgrades = [dict(row) for row in db.execute("SELECT * FROM upgrade_catalog ORDER BY upgrade_type,upgrade_level")]
         users = [dict(row) for row in db.execute("""SELECT u.id,u.email,u.name,u.role,u.auth_source,u.farmies,COALESCE(x.total_xp,0) total_xp,COALESCE(x.highest_level,1) highest_level
@@ -1417,13 +1434,13 @@ def admin_species(request: Request, species_key: str, product_name: str = Form(.
     return RedirectResponse("/admin", 303)
 
 
-@app.post("/admin/expansion/{blocks}")
-def admin_expansion(request: Request, blocks: int, price: int = Form(...), required_level: int|None=Form(None)):
+@app.post("/admin/expansion/{expansion_id}")
+def admin_expansion(request: Request, expansion_id: int, blocks: int=Form(...), price: int = Form(...), required_level: int|None=Form(None), enabled: bool=Form(False)):
     require_admin(request)
     if blocks < 1 or price < 0: raise HTTPException(400, "Enter valid land blocks and price.")
     with connection() as db:
         if required_level and not db.execute('SELECT 1 FROM levels WHERE level=? AND enabled=1',(required_level,)).fetchone(): raise HTTPException(400,'Choose an enabled level.')
-        result=db.execute("UPDATE expansion_prices SET price=?,required_level=? WHERE blocks=?", (price,required_level,blocks))
+        result=db.execute("UPDATE land_expansion_catalog SET blocks=?,price=?,required_level=?,enabled=? WHERE id=?", (blocks,price,required_level,1 if enabled else 0,expansion_id))
         if not result.rowcount: raise HTTPException(404,'Expansion package not found.')
     return RedirectResponse("/admin#land", 303)
 
@@ -1434,16 +1451,16 @@ def admin_expansion_create(request: Request, blocks: int=Form(...), price: int=F
     if blocks < 1 or price < 0: raise HTTPException(400,'Enter valid land blocks and price.')
     with connection() as db:
         if required_level and not db.execute('SELECT 1 FROM levels WHERE level=? AND enabled=1',(required_level,)).fetchone(): raise HTTPException(400,'Choose an enabled level.')
-        try: db.execute('INSERT INTO expansion_prices(blocks,price,required_level) VALUES (?,?,?)',(blocks,price,required_level))
-        except sqlite3.IntegrityError: raise HTTPException(409,'An expansion with this block amount already exists. Edit the existing package instead.')
+        db.execute('INSERT INTO land_expansion_catalog(blocks,price,required_level,enabled) VALUES (?,?,?,1)',(blocks,price,required_level))
     return RedirectResponse('/admin#land',303)
 
 
-@app.post("/admin/expansion/{blocks}/delete")
-def admin_expansion_delete(request: Request, blocks: int):
+@app.post("/admin/expansion/{expansion_id}/delete")
+def admin_expansion_delete(request: Request, expansion_id: int):
     require_admin(request)
     with connection() as db:
-        result=db.execute('DELETE FROM expansion_prices WHERE blocks=?',(blocks,))
+        used=db.execute('SELECT 1 FROM user_land_expansions WHERE catalog_id=? LIMIT 1',(expansion_id,)).fetchone()
+        result=db.execute('UPDATE land_expansion_catalog SET enabled=0 WHERE id=?' if used else 'DELETE FROM land_expansion_catalog WHERE id=?',(expansion_id,))
         if not result.rowcount: raise HTTPException(404,'Expansion package not found.')
     return RedirectResponse('/admin#land',303)
 

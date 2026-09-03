@@ -132,3 +132,7 @@ Restored the visible next slot-level upgrade action inside each eligible Process
 ### v3.1.9
 
 Fishery pond cards show their next upgrade throughout the pond lifecycle, explaining required level, added land, and when an active cycle must be finished first.
+
+### v3.2.0
+
+Land expansion offers are individually configurable by player level, block amount, and Farmies price. Each offer can be purchased once per farmer, including offers with the same block amount at different levels. Marketplace animal cards show their assigned feed.

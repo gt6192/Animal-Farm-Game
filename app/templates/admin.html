@@ -174,22 +174,24 @@
 <section class="panel">
 <p class="eyebrow">LAND</p>
 <h2>Expansion pricing</h2>
-<p>Create custom land packages, then edit or remove any package that is no longer offered. Past purchases stay on each farmer’s land.</p>
+<p>Create one-time land packages for any player level. The same land amount can be offered again at a different level; each offer is owned separately.</p>
 <form class="catalog-form" action="/admin/expansions/create" method="post">
 <label>Land blocks<input name="blocks" type="number" min="1" required placeholder="e.g. 75"></label>
 <label>Farmies price<input name="price" type="number" min="0" required></label>
 <label>Required level<select name="required_level"><option value="">Locked</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}">Level {{ level.level }}</option>{% endfor %}</select></label>
 <button>Add expansion</button>
 </form>
-<div class="admin-grid">{% for item in expansions %}<form action="/admin/expansion/{{ item.blocks }}" method="post">
-<strong>＋{{ item.blocks }} blocks</strong>
+<div class="admin-grid">{% for item in expansions %}<form action="/admin/expansion/{{ item.id }}" method="post">
+<strong>＋{{ item.blocks }} blocks · Offer #{{ item.id }}</strong>
+<label>Land blocks<input name="blocks" type="number" min="1" value="{{ item.blocks }}"></label>
 <label>Farmies price<input name="price" type="number" min="0" value="{{ item.price }}">
 </label>
 <label>Required level<select name="required_level">
 <option value="">Locked</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}" {% if item.required_level == level.level %}selected{% endif %}>Level {{ level.level }}</option>{% endfor %}</select>
 </label>
+<label><input name="enabled" type="checkbox" {% if item.enabled %}checked{% endif %}> Available to buy</label>
 <button>Save expansion</button>
-<button class="danger-button" formaction="/admin/expansion/{{ item.blocks }}/delete" formmethod="post" data-confirm-action="Remove the +{{ item.blocks }} block expansion? Existing farms will keep their already purchased land.">Delete</button>
+<button class="danger-button" formaction="/admin/expansion/{{ item.id }}/delete" formmethod="post" data-confirm-action="Remove this land offer? Existing farms will keep their already purchased land.">Delete</button>
 </form>{% endfor %}</div>
 </section>
 <section class="panel">
