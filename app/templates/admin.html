@@ -175,8 +175,7 @@
 </label>
 <small>Used by: {{ feed.species_name }}</small>
 <button>Save</button>
-</form><form action="/admin/feed/{{ feed.feed_key }}/delete" method="post" data-confirm-action="Delete {{ feed.name }}? This cannot be undone.">
-<button class="danger-button">Delete</button>
+<button class="danger-button" formaction="/admin/feed/{{ feed.feed_key }}/delete" formmethod="post" data-confirm-action="Delete {{ feed.name }}? This cannot be undone.">Delete</button>
 </form>{% endfor %}</div>
 </section>
 <section class="panel">

@@ -148,3 +148,7 @@ Land-offer ownership is recorded per unique offer rather than per shared block a
 ### v3.2.3
 
 Administrators can configure the number of feed packs one animal consumes per feed cycle. Feeding calculates the exact pack total for every hungry animal, and unused feeds can be deleted safely after they are unassigned and no farmer has stock remaining.
+
+### v3.2.4
+
+Feed delete actions stay within their matching feed card beside Save, preserving a tidy admin grid.
