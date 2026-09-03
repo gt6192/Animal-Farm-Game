@@ -156,3 +156,7 @@ Feed delete actions stay within their matching feed card beside Save, preserving
 ### v3.2.5
 
 Fishery cards and the seed marketplace show the configured fish sale value. Inventory now totals the current market value of sellable stock, excluding consumable feed. A compact main-page farm dashboard summarizes Farmies, land, livestock, sellable inventory value, fish stock, and transport load.
+
+### v3.2.6
+
+Fixed inventory valuation for existing animal-product rows, restoring the main dashboard for inventories created before the sellable-stock summary.

@@ -43,7 +43,7 @@ The user LaunchAgent is installed as `com.pratik.animal-farm` and requires no ad
 
 ## Release
 
-The current stable release is Animal Farm **v3.2.5**, created by Pratik Thombre. Earlier version tags preserve previous releases.
+The current stable release is Animal Farm **v3.2.6**, created by Pratik Thombre. Earlier version tags preserve previous releases.
 
 ## Processing
 

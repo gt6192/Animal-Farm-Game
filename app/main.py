@@ -615,7 +615,11 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
             for number in range(1,building['effective_slot_count']+1)]
     processing_land=sum(building['land_blocks'] for building in processing_buildings)
     inventory_used = sum(item["quantity"] * item["product_size"] for item in inventory)
-    inventory_market_value = sum(item["quantity"] * item["product_price"] for item in inventory if not item["is_feed"] and item["product_price"] is not None)
+    inventory_market_value = sum(
+        item["quantity"] * item["product_price"]
+        for item in inventory
+        if not item.get("is_feed", False) and item.get("product_price") is not None
+    )
     inventory_items = [item for item in inventory if item["quantity"] > 0]
     owned_species = [item for item in species if item["quantity"] > 0]
     deliveries = [dict(row) for row in db.execute("SELECT * FROM deliveries WHERE user_id=? ORDER BY started_at DESC LIMIT 10", (user_id,))]
