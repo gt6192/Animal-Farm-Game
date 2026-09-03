@@ -554,12 +554,16 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
         inventory.append({"product_key": feed["feed_key"], "product_name": feed["name"], "product_icon": feed["icon"],
             "product_size": feed["pack_size"], "product_price": None, "quantity": feed["quantity"], "is_feed": True})
     fish_species = [dict(row) for row in db.execute("SELECT * FROM fish_species WHERE enabled=1 ORDER BY name")]
+    fish_by_key = {fish["fish_key"]: fish for fish in fish_species}
     fish_seeds = [dict(row) for row in db.execute("SELECT * FROM fish_seeds WHERE enabled=1 ORDER BY name")]
     for fish in fish_species:
         fish["quantity"] = (db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(user_id,fish["product_key"])).fetchone() or {"quantity":0})["quantity"]
         inventory.append({"product_key":fish["product_key"],"product_name":fish["product_name"],"product_icon":fish["product_icon"],
             "product_size":fish["product_size"],"product_price":fish["sale_price"],"quantity":fish["quantity"],"is_feed":False})
     for seed in fish_seeds:
+        fish = fish_by_key.get(seed["fish_key"], {})
+        seed["fish_product_name"] = fish.get("product_name", "Fish")
+        seed["fish_sale_price"] = fish.get("sale_price", 0)
         seed["quantity"] = (db.execute("SELECT quantity FROM inventory WHERE user_id=? AND product_key=?",(user_id,seed["seed_key"])).fetchone() or {"quantity":0})["quantity"]
         inventory.append({"product_key":seed["seed_key"],"product_name":seed["name"],"product_icon":seed["icon"],
             "product_size":seed["pack_size"],"product_price":None,"quantity":seed["quantity"],"is_feed":True})
@@ -570,7 +574,8 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
             'product_size':product['product_size'],'product_price':product['product_price'],'quantity':product['quantity'],'is_feed':False})
     animal_land = sum(item["quantity"] * item["land_blocks"] for item in species)
     ponds = [dict(row) for row in db.execute("""SELECT p.*,c.name level_name,c.icon,c.land_blocks,c.sack_capacity,c.fish_per_sack,c.growth_seconds,
-        c.fish_key,f.name fish_name,f.product_icon,s.seed_key,s.name seed_name,COALESCE(i.quantity,0) seed_quantity
+        c.fish_key,f.name fish_name,f.product_name fish_product_name,f.product_icon,f.sale_price fish_sale_price,
+        s.seed_key,s.name seed_name,COALESCE(i.quantity,0) seed_quantity
         FROM user_ponds p JOIN pond_catalog c ON c.pond_level=p.pond_level JOIN fish_species f ON f.fish_key=c.fish_key
         LEFT JOIN fish_seeds s ON s.fish_key=c.fish_key AND s.enabled=1 LEFT JOIN inventory i ON i.user_id=p.user_id AND i.product_key=s.seed_key
         WHERE p.user_id=? ORDER BY p.id""",(user_id,))]
@@ -610,6 +615,7 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
             for number in range(1,building['effective_slot_count']+1)]
     processing_land=sum(building['land_blocks'] for building in processing_buildings)
     inventory_used = sum(item["quantity"] * item["product_size"] for item in inventory)
+    inventory_market_value = sum(item["quantity"] * item["product_price"] for item in inventory if not item["is_feed"] and item["product_price"] is not None)
     inventory_items = [item for item in inventory if item["quantity"] > 0]
     owned_species = [item for item in species if item["quantity"] > 0]
     deliveries = [dict(row) for row in db.execute("SELECT * FROM deliveries WHERE user_id=? ORDER BY started_at DESC LIMIT 10", (user_id,))]
@@ -654,7 +660,7 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     return {"farm": dict(farm), "user": dict(user), "species": species, "owned_species": owned_species, "inventory": inventory,
             "inventory_items": inventory_items, "animal_land": animal_land,
             "land_available": farm["total_blocks"] - farm["inventory_blocks"] - animal_land - pond_land - processing_land,
-            "inventory_used": inventory_used, "deliveries": deliveries, "transport_busy": transport_busy,
+            "inventory_used": inventory_used, "inventory_market_value": inventory_market_value, "deliveries": deliveries, "transport_busy": transport_busy,
             "cargo": cargo, "cargo_capacity": cargo_capacity, "cargo_revenue": cargo_revenue,
             "ledger": ledger, "expansions": expansions,
             "feeds": feeds, "fish_species":fish_species,"fish_seeds":fish_seeds,"ponds":ponds,"pond_land":pond_land,"pond_limit":pond_limit,
