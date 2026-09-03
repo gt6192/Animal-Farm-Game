@@ -144,3 +144,7 @@ Marketplace animal cards use a compact feed badge with intentional spacing, keep
 ### v3.2.2
 
 Land-offer ownership is recorded per unique offer rather than per shared block amount. Legacy purchases are safely reconciled so buying one 50-block offer does not mark every 50-block offer as owned.
+
+### v3.2.3
+
+Administrators can configure the number of feed packs one animal consumes per feed cycle. Feeding calculates the exact pack total for every hungry animal, and unused feeds can be deleted safely after they are unassigned and no farmer has stock remaining.

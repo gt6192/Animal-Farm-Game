@@ -203,6 +203,8 @@ def initialize_database() -> None:
         if "sell_price" not in species_columns:
             db.execute("ALTER TABLE species ADD COLUMN sell_price INTEGER NOT NULL DEFAULT 0")
             db.execute("UPDATE species SET sell_price=MAX(1,CAST(buy_price * 0.5 AS INTEGER))")
+        if "feed_packs" not in species_columns:
+            db.execute("ALTER TABLE species ADD COLUMN feed_packs INTEGER NOT NULL DEFAULT 1")
         seeds = [
             ('hen','Hen','🐔',1,20,10,'egg','Egg','🥚',.5,4,7200,2,6),
             ('goat','Goat','🐐',2,120,60,'goat_milk','Goat milk','🥛',2,22,21600,10,8),
@@ -533,6 +535,7 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
         item["pending_units"] = sum(batch["pending_units"] for batch in batches)
         item["fed_quantity"] = sum(batch["quantity"] for batch in active)
         item["hungry_quantity"] = sum(batch["quantity"] for batch in hungry)
+        item["needed_feed_packs"] = item["hungry_quantity"] * item["feed_packs"]
         item["is_fed"] = bool(item["quantity"] and not item["hungry_quantity"])
         earliest_feed_expiry = min((dt(batch["fed_until"]) for batch in active), default=None)
         item["fed_until"] = earliest_feed_expiry.isoformat() if earliest_feed_expiry else None
@@ -793,14 +796,15 @@ def feed_animals(request: Request, species_key: str = Form(...)):
     uid = user_id(request)
     with connection() as db:
         sync_world(db, uid)
-        row = db.execute("""SELECT s.name,s.feed_hours,f.feed_key,f.name feed_name FROM species s
+        row = db.execute("""SELECT s.name,s.feed_hours,s.feed_packs,f.feed_key,f.name feed_name FROM species s
             JOIN feeds f ON f.feed_key=s.feed_key WHERE s.species_key=?""", (species_key,)).fetchone()
         if not row: raise HTTPException(404, "Animal feed not found.")
         current = now()
         hungry_batches = db.execute("""SELECT * FROM animal_batches WHERE user_id=? AND species_key=?
             AND (fed_until IS NULL OR fed_until<=?) ORDER BY id""", (uid, species_key, current.isoformat())).fetchall()
-        needed = sum(batch["quantity"] for batch in hungry_batches)
-        if needed < 1:
+        hungry_animals = sum(batch["quantity"] for batch in hungry_batches)
+        needed = hungry_animals * row["feed_packs"]
+        if hungry_animals < 1:
             owned = db.execute("SELECT COUNT(*) FROM animal_batches WHERE user_id=? AND species_key=?", (uid, species_key)).fetchone()[0]
             if not owned: raise HTTPException(404, "No animals to feed.")
             raise HTTPException(409, f"{row['name']} are already fed. Wait for the current feed cycle to finish.")
@@ -1469,14 +1473,14 @@ def admin_xp_adjust(request: Request, target_user_id: int=Form(...), amount: int
 
 
 @app.post("/admin/species/{species_key}")
-def admin_species(request: Request, species_key: str, product_name: str = Form(...), product_icon: str = Form("📦"), buy_price: int = Form(...), sell_price: int = Form(...), product_price: int = Form(...), production_minutes: int = Form(...), feed_hours: int = Form(...), land_blocks: int = Form(...), product_size: float = Form(...), feed_key: str = Form(...), required_level: int | None = Form(None)):
+def admin_species(request: Request, species_key: str, product_name: str = Form(...), product_icon: str = Form("📦"), buy_price: int = Form(...), sell_price: int = Form(...), product_price: int = Form(...), production_minutes: int = Form(...), feed_hours: int = Form(...), feed_packs: int = Form(...), land_blocks: int = Form(...), product_size: float = Form(...), feed_key: str = Form(...), required_level: int | None = Form(None)):
     require_admin(request)
     clean_product_name = " ".join(product_name.split())
-    if len(clean_product_name)<2 or min(buy_price,product_price,production_minutes,feed_hours,land_blocks) < 1 or sell_price < 0 or product_size <= 0: raise HTTPException(400, "Enter a valid product name and positive values; the animal sell price cannot be negative.")
+    if len(clean_product_name)<2 or min(buy_price,product_price,production_minutes,feed_hours,feed_packs,land_blocks) < 1 or sell_price < 0 or product_size <= 0: raise HTTPException(400, "Enter a valid product name and positive values; the animal sell price cannot be negative.")
     with connection() as db:
         if not db.execute("SELECT 1 FROM feeds WHERE feed_key=?", (feed_key,)).fetchone(): raise HTTPException(400, "Selected feed does not exist.")
         if required_level and not db.execute("SELECT 1 FROM levels WHERE level=? AND enabled=1",(required_level,)).fetchone(): raise HTTPException(400,"Choose an enabled level.")
-        result = db.execute("""UPDATE species SET product_name=?,product_icon=?,buy_price=?,sell_price=?,product_price=?,production_seconds=?,feed_hours=?,land_blocks=?,product_size=?,feed_key=?,required_level=? WHERE species_key=?""", (clean_product_name,product_icon.strip()[:12] or '📦',buy_price,sell_price,product_price,production_minutes*60,feed_hours,land_blocks,product_size,feed_key,required_level,species_key))
+        result = db.execute("""UPDATE species SET product_name=?,product_icon=?,buy_price=?,sell_price=?,product_price=?,production_seconds=?,feed_hours=?,feed_packs=?,land_blocks=?,product_size=?,feed_key=?,required_level=? WHERE species_key=?""", (clean_product_name,product_icon.strip()[:12] or '📦',buy_price,sell_price,product_price,production_minutes*60,feed_hours,feed_packs,land_blocks,product_size,feed_key,required_level,species_key))
         if not result.rowcount: raise HTTPException(404, "Species not found.")
     return RedirectResponse("/admin", 303)
 
@@ -1522,6 +1526,22 @@ def admin_feed(request: Request, feed_key: str, pack_price: int = Form(...), pac
     return RedirectResponse("/admin", 303)
 
 
+@app.post("/admin/feed/{feed_key}/delete")
+def delete_feed(request: Request, feed_key: str):
+    require_admin(request)
+    with connection() as db:
+        assigned = db.execute("SELECT name FROM species WHERE feed_key=? LIMIT 1", (feed_key,)).fetchone()
+        if assigned:
+            raise HTTPException(409, f"{assigned['name']} still uses this feed. Assign another feed before deleting it.")
+        stocked = db.execute("SELECT 1 FROM inventory WHERE product_key=? AND quantity>0 LIMIT 1", (feed_key,)).fetchone()
+        if stocked:
+            raise HTTPException(409, "This feed is still stored in a farmer inventory. Remove or use the remaining packs before deleting it.")
+        result = db.execute("DELETE FROM feeds WHERE feed_key=?", (feed_key,))
+        if not result.rowcount:
+            raise HTTPException(404, "Feed not found.")
+    return RedirectResponse("/admin", 303)
+
+
 @app.post("/admin/feeds/create")
 def create_feed(request: Request, name: str = Form(...), icon: str = Form("🌾"), pack_price: int = Form(...), pack_size: float = Form(...), description: str = Form("")):
     require_admin(request)
@@ -1540,10 +1560,10 @@ def create_feed(request: Request, name: str = Form(...), icon: str = Form("🌾"
 @app.post("/admin/catalog/species/create")
 def create_species(request: Request, name: str = Form(...), icon: str = Form("🐾"), land_blocks: int = Form(...), buy_price: int = Form(...),
     sell_price: int = Form(...), product_name: str = Form(...), product_icon: str = Form("📦"), product_size: float = Form(...), product_price: int = Form(...),
-    production_minutes: int = Form(...), feed_hours: int = Form(...), feed_key: str = Form(...), required_level: int | None = Form(None)):
+    production_minutes: int = Form(...), feed_hours: int = Form(...), feed_packs: int = Form(...), feed_key: str = Form(...), required_level: int | None = Form(None)):
     require_admin(request)
     clean_name = " ".join(name.split()); clean_product = " ".join(product_name.split())
-    if min(land_blocks,buy_price,product_price,production_minutes,feed_hours) < 1 or sell_price < 0 or product_size <= 0 or len(clean_name) < 2 or len(clean_product) < 2:
+    if min(land_blocks,buy_price,product_price,production_minutes,feed_hours,feed_packs) < 1 or sell_price < 0 or product_size <= 0 or len(clean_name) < 2 or len(clean_product) < 2:
         raise HTTPException(400, "Complete every animal and product field with positive values.")
     species_key = catalog_key(clean_name); product_key = catalog_key(clean_product)
     with connection() as db:
@@ -1552,9 +1572,9 @@ def create_species(request: Request, name: str = Form(...), icon: str = Form("�
         if db.execute("SELECT 1 FROM species WHERE species_key=? OR lower(name)=lower(?)", (species_key, clean_name)).fetchone(): raise HTTPException(409, "An animal with this name already exists.")
         if db.execute("SELECT 1 FROM species WHERE product_key=?", (product_key,)).fetchone(): raise HTTPException(409, "That product name is already used by another animal.")
         db.execute("""INSERT INTO species(species_key,name,icon,land_blocks,buy_price,sell_price,product_key,product_name,product_icon,product_size,
-            product_price,production_seconds,feed_price,feed_hours,feed_key,required_level) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            product_price,production_seconds,feed_price,feed_hours,feed_packs,feed_key,required_level) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (species_key,clean_name,icon.strip()[:12] or "🐾",land_blocks,buy_price,sell_price,product_key,clean_product,product_icon.strip()[:12] or "📦",
-             product_size,product_price,production_minutes*60,1,feed_hours,feed_key,required_level))
+             product_size,product_price,production_minutes*60,1,feed_hours,feed_packs,feed_key,required_level))
     return RedirectResponse("/admin", 303)
 
 

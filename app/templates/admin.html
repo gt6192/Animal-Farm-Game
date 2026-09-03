@@ -85,6 +85,8 @@
 </label>
 <label>Feed duration hours<input name="feed_hours" type="number" min="1" required value="6">
 </label>
+<label>Feed packs per animal<input name="feed_packs" type="number" min="1" required value="1">
+</label>
 <label>Unlock level<select name="required_level">
 <option value="">Locked / unassigned</option>{% for level in levels if level.enabled %}<option value="{{ level.level }}">Level {{ level.level }}</option>{% endfor %}</select>
 </label>
@@ -109,6 +111,7 @@
 <th>Cycle minutes</th>
 <th>Assigned feed</th>
 <th>Feed hours</th>
+<th>Packs / animal</th>
 <th>Land</th>
 <th>Product size</th>
 <th>Unlock level</th>
@@ -141,6 +144,9 @@
 <input form="species-{{ item.species_key }}" name="feed_hours" type="number" value="{{ item.feed_hours }}">
 </td>
 <td>
+<input form="species-{{ item.species_key }}" name="feed_packs" type="number" min="1" value="{{ item.feed_packs }}" aria-label="Feed packs per {{ item.name }}">
+</td>
+<td>
 <input form="species-{{ item.species_key }}" name="land_blocks" type="number" value="{{ item.land_blocks }}">
 </td>
 <td>
@@ -169,6 +175,8 @@
 </label>
 <small>Used by: {{ feed.species_name }}</small>
 <button>Save</button>
+</form><form action="/admin/feed/{{ feed.feed_key }}/delete" method="post" data-confirm-action="Delete {{ feed.name }}? This cannot be undone.">
+<button class="danger-button">Delete</button>
 </form>{% endfor %}</div>
 </section>
 <section class="panel">
