@@ -5,6 +5,17 @@
     node.textContent = seconds ? `${node.dataset.prefix || ''}${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(secs).padStart(2,'0')}` : 'Ready now';
   });
   render(); setInterval(render, 1000); setInterval(() => { if (!document.querySelector('dialog[open]')) location.reload(); }, 60000);
+  const versionFooter = document.querySelector('footer');
+  if (versionFooter) versionFooter.textContent = 'Animal Farm · v4.0.0 · A Daily Tracker Arcade project';
+  document.querySelectorAll('.vendor-order form').forEach(form => {
+    const riderSelect = form.querySelector('select[name="rider_key"]');
+    const sendButton = form.querySelector('button');
+    if (riderSelect && sendButton && riderSelect.options.length === 0) {
+      riderSelect.disabled = true;
+      sendButton.disabled = true;
+      sendButton.textContent = 'No eligible rider available';
+    }
+  });
   document.querySelectorAll('[data-open]').forEach(button => button.addEventListener('click', () => document.getElementById(button.dataset.open)?.showModal()));
   document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => button.closest('dialog')?.close()));
   document.querySelectorAll('form[data-confirm]').forEach(form => form.addEventListener('submit', event => {
@@ -33,6 +44,7 @@
 
   const panelConfig = {
     fishery: { icon: '🐟', label: 'Fishery', title: 'Ponds & fishery' },
+    vendors: { icon: '🗺️', label: 'Vendors', title: 'Vendor map' },
     'my-animals': { icon: '🐾', label: 'My animals', title: 'My animals' },
     inventory: { icon: '🎒', label: 'Inventory', title: 'Farm inventory' },
     deliveries: { icon: '🚚', label: 'Deliveries', title: 'Market deliveries' },

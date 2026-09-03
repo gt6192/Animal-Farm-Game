@@ -320,7 +320,10 @@ def initialize_database() -> None:
                 [(legacy_user_id, offer_id) for offer_id in mapped_offer_ids],
             )
         db.execute("CREATE TABLE IF NOT EXISTS levels(level INTEGER PRIMARY KEY,name TEXT NOT NULL,xp_required INTEGER NOT NULL UNIQUE,enabled INTEGER NOT NULL DEFAULT 1)")
-        db.executemany("INSERT OR IGNORE INTO levels VALUES (?,?,?,1)", [(1,'Farm Starter',0),(2,'Growing Farmer',100)])
+        db.executemany("INSERT OR IGNORE INTO levels VALUES (?,?,?,1)", [
+            (1,'Farm Starter',0),(2,'Growing Farmer',100),(3,'Field Hand',250),(4,'Village Supplier',450),
+            (5,'Market Regular',700),(6,'Trusted Grower',1000),(7,'Regional Farmer',1400),
+            (8,'Trade Leader',1900),(9,'Farm Specialist',2500),(10,'Harvest Master',3200)])
         db.execute("UPDATE species SET required_level=1 WHERE species_key IN ('hen','goat') AND required_level IS NULL")
         db.execute("UPDATE species SET required_level=2 WHERE species_key IN ('duck','goose') AND required_level IS NULL")
         db.execute("""CREATE TABLE IF NOT EXISTS xp_wallets(user_id INTEGER PRIMARY KEY,total_xp INTEGER NOT NULL DEFAULT 0,
@@ -419,6 +422,28 @@ def initialize_database() -> None:
         db.executemany("INSERT OR IGNORE INTO pond_catalog VALUES (?,?,?,?,?,?,?,?,?,?,1)", [
             (1,'Starter Pond','💧',2,2000,20,1,100,86400,'carp'),
             (2,'Growing Pond','🌊',3,5000,40,2,100,86400,'carp')])
+        db.execute("""CREATE TABLE IF NOT EXISTS vendors(
+            vendor_key TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,category TEXT NOT NULL,
+            required_level INTEGER NOT NULL DEFAULT 1,duration_seconds INTEGER NOT NULL DEFAULT 1800,
+            position_x INTEGER NOT NULL DEFAULT 50,position_y INTEGER NOT NULL DEFAULT 50,enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS delivery_riders(
+            rider_key TEXT PRIMARY KEY,name TEXT NOT NULL,icon TEXT NOT NULL,required_level INTEGER NOT NULL DEFAULT 1,
+            capacity REAL NOT NULL DEFAULT 20,duration_seconds INTEGER NOT NULL DEFAULT 1800,tip INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS vendor_orders(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,vendor_key TEXT NOT NULL,name TEXT NOT NULL,product_key TEXT NOT NULL,
+            quantity INTEGER NOT NULL,reward INTEGER NOT NULL,required_level INTEGER NOT NULL DEFAULT 1,enabled INTEGER NOT NULL DEFAULT 1)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS vendor_deliveries(
+            id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,vendor_key TEXT NOT NULL,rider_key TEXT NOT NULL,order_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'travelling',product_key TEXT NOT NULL,product_name TEXT NOT NULL,product_icon TEXT NOT NULL,
+            quantity INTEGER NOT NULL,reward INTEGER NOT NULL,tip INTEGER NOT NULL,started_at TEXT NOT NULL,ready_at TEXT NOT NULL,settled_at TEXT)""")
+        db.execute("CREATE INDEX IF NOT EXISTS vendor_deliveries_user_status ON vendor_deliveries(user_id,status,ready_at)")
+        db.executemany("INSERT OR IGNORE INTO vendors VALUES (?,?,?,?,?,?,?,?,1)",[
+            ('school_kitchen','School Kitchen','🏫','Community',2,1500,22,30),('village_bakery','Village Bakery','🥖','Food',3,2100,55,45),('fish_cafe','Fish Cafe','🍽️','Hospitality',4,2700,76,65)])
+        db.executemany("INSERT OR IGNORE INTO delivery_riders VALUES (?,?,?,?,?,?,?,1)",[
+            ('arun','Arun','🛵',1,20,1800,5),('meera','Meera','🚲',3,35,1500,8),('kabir','Kabir','🏍️',6,60,1200,12)])
+        if not db.execute("SELECT 1 FROM vendor_orders LIMIT 1").fetchone():
+            db.executemany("INSERT INTO vendor_orders(vendor_key,name,product_key,quantity,reward,required_level) VALUES (?,?,?,?,?,?)",[
+                ('school_kitchen','Fresh egg tray','egg',20,100,2),('village_bakery','Morning egg supply','egg',30,175,3),('fish_cafe','Fresh fish order','carp_fish',20,160,4)])
         for user in db.execute("SELECT id FROM users").fetchall():
             db.execute("INSERT OR IGNORE INTO xp_wallets(user_id) VALUES (?)", (user['id'],))
         backfill_xp(db)
@@ -513,6 +538,12 @@ def sync_world(db: sqlite3.Connection, user_id: int) -> None:
         if not is_fish or setting(db,'fishery_sales_xp_enabled'):
             grant_xp_for_farmies(db,user_id,f"delivery:{delivery['id']}",'sales',delivery['revenue'],f"Sold {delivery['quantity']} {delivery['product_key']}")
         db.execute("UPDATE deliveries SET status='sold',settled_at=? WHERE id=?", (current.isoformat(), delivery["id"]))
+    vendor_ready = db.execute("SELECT * FROM vendor_deliveries WHERE user_id=? AND status='travelling' AND ready_at<=?", (user_id,current.isoformat())).fetchall()
+    for delivery in vendor_ready:
+        net = delivery['reward'] - delivery['tip']
+        transact(db,user_id,net,f"vendor-delivery:{delivery['id']}",f"Vendor delivery: {delivery['product_name']} to {delivery['vendor_key']}",{"delivery_id":delivery['id'],"gross_reward":delivery['reward'],"rider_tip":delivery['tip']})
+        grant_xp_for_farmies(db,user_id,f"vendor-delivery:{delivery['id']}",'sales',net,f"Vendor delivery settled")
+        db.execute("UPDATE vendor_deliveries SET status='delivered',settled_at=? WHERE id=?",(current.isoformat(),delivery['id']))
     db.execute("""UPDATE user_ponds SET status='ready',ready_fish=(
             SELECT c.fish_count FROM pond_cycles c WHERE c.id=(
                 SELECT id FROM pond_cycles WHERE pond_id=user_ponds.id AND user_id=? AND status='growing' ORDER BY started_at DESC LIMIT 1))
@@ -660,6 +691,27 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
     current_transport = db.execute("SELECT name FROM upgrade_catalog WHERE upgrade_type='transport' AND upgrade_level=?",(farm['transport_level'],)).fetchone()
     transport_name = current_transport['name'] if current_transport else 'Bicycle'
     transport_icon = '🚲' if farm['transport_level']==1 else ('🏍️' if 'bike' in transport_name.lower() else '🚚')
+    vendors=[dict(row) for row in db.execute("SELECT * FROM vendors WHERE enabled=1 ORDER BY position_y,position_x,name")]
+    riders=[dict(row) for row in db.execute("SELECT * FROM delivery_riders WHERE enabled=1 ORDER BY required_level,name")]
+    vendor_orders=[dict(row) for row in db.execute("""SELECT o.*,v.name vendor_name,v.icon vendor_icon,v.required_level vendor_required_level,
+        s.product_name,s.product_icon,s.product_size,COALESCE(i.quantity,0) stock
+        FROM vendor_orders o JOIN vendors v USING(vendor_key) JOIN species s ON s.product_key=o.product_key
+        LEFT JOIN inventory i ON i.user_id=? AND i.product_key=o.product_key WHERE o.enabled=1 AND v.enabled=1
+        UNION ALL SELECT o.*,v.name,v.icon,v.required_level,f.product_name,f.product_icon,f.product_size,COALESCE(i.quantity,0)
+        FROM vendor_orders o JOIN vendors v USING(vendor_key) JOIN fish_species f ON f.product_key=o.product_key
+        LEFT JOIN inventory i ON i.user_id=? AND i.product_key=o.product_key WHERE o.enabled=1 AND v.enabled=1
+        UNION ALL SELECT o.*,v.name,v.icon,v.required_level,p.name,p.icon,p.product_size,COALESCE(i.quantity,0)
+        FROM vendor_orders o JOIN vendors v USING(vendor_key) JOIN processing_products p ON p.product_key=o.product_key
+        LEFT JOIN inventory i ON i.user_id=? AND i.product_key=o.product_key WHERE o.enabled=1 AND v.enabled=1
+        ORDER BY vendor_name,name""",(user_id,user_id,user_id))]
+    active_riders={row['rider_key'] for row in db.execute("SELECT rider_key FROM vendor_deliveries WHERE user_id=? AND status='travelling'",(user_id,)).fetchall()}
+    for rider in riders: rider['busy']=rider['rider_key'] in active_riders
+    for order in vendor_orders:
+        order['eligible_riders'] = [rider for rider in riders
+            if rider['required_level'] <= wallet['highest_level']
+            and not rider['busy']
+            and order['quantity'] * order['product_size'] <= rider['capacity'] + 1e-9]
+    vendor_deliveries=[dict(row) for row in db.execute("SELECT * FROM vendor_deliveries WHERE user_id=? ORDER BY started_at DESC LIMIT 12",(user_id,))]
     game_settings['bicycle_capacity'] = farm['transport_capacity']; game_settings['bicycle_seconds'] = farm['transport_seconds']
     return {"farm": dict(farm), "user": dict(user), "species": species, "owned_species": owned_species, "inventory": inventory,
             "inventory_items": inventory_items, "animal_land": animal_land,
@@ -670,6 +722,7 @@ def snapshot(db: sqlite3.Connection, user_id: int) -> dict:
             "feeds": feeds, "fish_species":fish_species,"fish_seeds":fish_seeds,"ponds":ponds,"pond_land":pond_land,"pond_limit":pond_limit,
             "processing_buildings":processing_buildings,"processing_buildings_catalog":processing_buildings_catalog,"building_upgrades":building_upgrades,"processing_recipes":recipes,"processing_jobs":processing_jobs,"processing_land":processing_land,
             "pond_catalog":[dict(row) for row in db.execute("SELECT * FROM pond_catalog WHERE enabled=1 ORDER BY pond_level")],
+            "vendors":vendors,"vendor_orders":vendor_orders,"riders":riders,"vendor_deliveries":vendor_deliveries,
             "settings": game_settings, "xp": wallet, "upgrades": upgrades, "transport_name":transport_name,"transport_icon":transport_icon,
             "transport_duration":duration_label(farm['transport_seconds']),"now_iso": current.isoformat()}
 
@@ -1229,6 +1282,31 @@ def require_admin(request: Request) -> None:
     if request.state.identity["role"] != "admin": raise HTTPException(403, "Admin access required.")
 
 
+@app.post('/vendors/deliveries/start')
+def start_vendor_delivery(request: Request, order_id: int=Form(...), rider_key: str=Form(...)):
+    uid=user_id(request)
+    with connection() as db:
+        state=snapshot(db,uid); level=state['xp']['highest_level']
+        order=db.execute("SELECT o.*,v.name vendor_name,v.required_level vendor_level,v.duration_seconds FROM vendor_orders o JOIN vendors v USING(vendor_key) WHERE o.id=? AND o.enabled=1 AND v.enabled=1",(order_id,)).fetchone()
+        rider=db.execute("SELECT * FROM delivery_riders WHERE rider_key=? AND enabled=1",(rider_key,)).fetchone()
+        if not order or not rider: raise HTTPException(404,'Vendor order or delivery rider not found.')
+        if level<max(order['required_level'],order['vendor_level'],rider['required_level']): raise HTTPException(403,'Your farmer level has not unlocked this delivery.')
+        if db.execute("SELECT 1 FROM vendor_deliveries WHERE user_id=? AND rider_key=? AND status='travelling'",(uid,rider_key)).fetchone(): raise HTTPException(409,f"{rider['name']} is already on a delivery.")
+        product=db.execute("""SELECT product_name name,product_icon icon,product_size FROM species WHERE product_key=?
+            UNION ALL SELECT product_name,product_icon,product_size FROM fish_species WHERE product_key=?
+            UNION ALL SELECT name,icon,product_size FROM processing_products WHERE product_key=? LIMIT 1""",(order['product_key'],order['product_key'],order['product_key'])).fetchone()
+        if not product: raise HTTPException(400,'This order uses a product that no longer exists.')
+        if order['quantity']*product['product_size']>rider['capacity']+1e-9: raise HTTPException(400,f"This order needs {order['quantity']*product['product_size']:.1f} capacity; {rider['name']} can carry {rider['capacity']:.1f}.")
+        stock=db.execute('SELECT quantity FROM inventory WHERE user_id=? AND product_key=?',(uid,order['product_key'])).fetchone()
+        if not stock or stock['quantity']<order['quantity']: raise HTTPException(400,f"You need {order['quantity']} {product['name']} in inventory.")
+        db.execute('UPDATE inventory SET quantity=quantity-? WHERE user_id=? AND product_key=?',(order['quantity'],uid,order['product_key']))
+        # Travel duration belongs to the chosen rider, so their admin setting is authoritative.
+        started=now(); seconds=rider['duration_seconds']
+        db.execute("""INSERT INTO vendor_deliveries(id,user_id,vendor_key,rider_key,order_id,status,product_key,product_name,product_icon,quantity,reward,tip,started_at,ready_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(uuid.uuid4().hex,uid,order['vendor_key'],rider_key,order['id'],'travelling',order['product_key'],product['name'],product['icon'],order['quantity'],order['reward'],rider['tip'],started.isoformat(),(started+timedelta(seconds=seconds)).isoformat()))
+    return RedirectResponse('/?open=vendors-screen',303)
+
+
 def catalog_key(value: str) -> str:
     key = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
     if not key: raise HTTPException(400, "Enter a name containing letters or numbers.")
@@ -1273,7 +1351,10 @@ def admin_page(request: Request, error: str = ""):
             JOIN processing_building_catalog b ON b.building_key=ub.building_key ORDER BY j.started_at DESC LIMIT 200""")]
         product_catalog=[dict(row) for row in db.execute("""SELECT product_key,product_name name,product_icon icon FROM species
             UNION ALL SELECT product_key,product_name,product_icon FROM fish_species UNION ALL SELECT product_key,name,icon FROM processing_products ORDER BY name""")]
-    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"fish_species":fish_species,"fish_seeds":fish_seeds,"pond_catalog":pond_catalog,"pond_limits":pond_limits,"user_ponds":user_ponds,"pond_cycles":pond_cycles,"processing_buildings":processing_buildings,"processing_building_upgrades":processing_building_upgrades,"processing_products":processing_products,"processing_recipes":processing_recipes,"processing_jobs":processing_jobs,"product_catalog":product_catalog,"identity": request.state.identity, "error": error})
+        vendors=[dict(row) for row in db.execute('SELECT * FROM vendors ORDER BY name')]
+        riders=[dict(row) for row in db.execute('SELECT * FROM delivery_riders ORDER BY required_level,name')]
+        vendor_orders=[dict(row) for row in db.execute('SELECT o.*,v.name vendor_name FROM vendor_orders o JOIN vendors v USING(vendor_key) ORDER BY v.name,o.name')]
+    return templates.TemplateResponse(request, "admin.html", {"settings": settings, "species": species, "feeds": feeds, "expansions": expansions, "users": users, "levels":levels,"upgrades":upgrades,"xp_history":xp_history,"fish_species":fish_species,"fish_seeds":fish_seeds,"pond_catalog":pond_catalog,"pond_limits":pond_limits,"user_ponds":user_ponds,"pond_cycles":pond_cycles,"processing_buildings":processing_buildings,"processing_building_upgrades":processing_building_upgrades,"processing_products":processing_products,"processing_recipes":processing_recipes,"processing_jobs":processing_jobs,"product_catalog":product_catalog,"vendors":vendors,"riders":riders,"vendor_orders":vendor_orders,"identity": request.state.identity, "error": error})
 
 
 @app.post("/admin/settings")
@@ -1283,6 +1364,94 @@ def admin_setting(request: Request, key: str = Form(...), value: str = Form(...)
     if key not in allowed or float(value) < 0 or (key in {'xp_sales_rate','xp_development_rate','capacity_per_land'} and float(value)<=0): raise HTTPException(400, "Invalid setting.")
     with connection() as db: db.execute("UPDATE settings SET value=?,updated_at=CURRENT_TIMESTAMP WHERE key=?", (value, key))
     return RedirectResponse("/admin", 303)
+
+
+@app.post('/admin/vendors/create')
+def admin_vendor_create(request: Request,name: str=Form(...),icon: str=Form('🏪'),category: str=Form('Local'),required_level: int=Form(...),duration_minutes: int=Form(...),position_x: int=Form(50),position_y: int=Form(50)):
+    require_admin(request); clean=' '.join(name.split()); key=catalog_key(clean)
+    if len(clean)<2 or min(required_level,duration_minutes)<1 or not 0<=position_x<=100 or not 0<=position_y<=100: raise HTTPException(400,'Enter valid vendor details.')
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM levels WHERE level=? AND enabled=1',(required_level,)).fetchone(): raise HTTPException(400,'Choose an enabled level.')
+        try: db.execute('INSERT INTO vendors VALUES (?,?,?,?,?,?,?,?,1)',(key,clean,icon.strip()[:12] or '🏪',category.strip()[:40] or 'Local',required_level,duration_minutes*60,position_x,position_y))
+        except sqlite3.IntegrityError: raise HTTPException(409,'A vendor with this name already exists.')
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/vendors/{vendor_key}')
+def admin_vendor_edit(request: Request,vendor_key: str,name: str=Form(...),icon: str=Form('🏪'),category: str=Form('Local'),required_level: int=Form(...),duration_minutes: int=Form(...),position_x: int=Form(50),position_y: int=Form(50),enabled: bool=Form(False)):
+    require_admin(request); clean=' '.join(name.split())
+    if len(clean)<2 or min(required_level,duration_minutes)<1 or not 0<=position_x<=100 or not 0<=position_y<=100: raise HTTPException(400,'Enter valid vendor details.')
+    with connection() as db:
+        result=db.execute('UPDATE vendors SET name=?,icon=?,category=?,required_level=?,duration_seconds=?,position_x=?,position_y=?,enabled=? WHERE vendor_key=?',(clean,icon.strip()[:12] or '🏪',category.strip()[:40] or 'Local',required_level,duration_minutes*60,position_x,position_y,1 if enabled else 0,vendor_key))
+        if not result.rowcount: raise HTTPException(404,'Vendor not found.')
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/vendors/{vendor_key}/delete')
+def admin_vendor_delete(request: Request,vendor_key: str):
+    require_admin(request)
+    with connection() as db:
+        used=db.execute('SELECT 1 FROM vendor_orders WHERE vendor_key=? LIMIT 1',(vendor_key,)).fetchone() or db.execute('SELECT 1 FROM vendor_deliveries WHERE vendor_key=? LIMIT 1',(vendor_key,)).fetchone()
+        if used: db.execute('UPDATE vendors SET enabled=0 WHERE vendor_key=?',(vendor_key,))
+        elif not db.execute('DELETE FROM vendors WHERE vendor_key=?',(vendor_key,)).rowcount: raise HTTPException(404,'Vendor not found.')
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/riders/create')
+def admin_rider_create(request: Request,name: str=Form(...),icon: str=Form('🛵'),required_level: int=Form(...),capacity: float=Form(...),duration_minutes: int=Form(...),tip: int=Form(0)):
+    require_admin(request); clean=' '.join(name.split()); key=catalog_key(clean)
+    if len(clean)<2 or min(required_level,capacity,duration_minutes)<1 or tip<0: raise HTTPException(400,'Enter valid rider details.')
+    with connection() as db:
+        try: db.execute('INSERT INTO delivery_riders VALUES (?,?,?,?,?,?,?,1)',(key,clean,icon.strip()[:12] or '🛵',required_level,capacity,duration_minutes*60,tip))
+        except sqlite3.IntegrityError: raise HTTPException(409,'A rider with this name already exists.')
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/riders/{rider_key}')
+def admin_rider_edit(request: Request,rider_key: str,name: str=Form(...),icon: str=Form('🛵'),required_level: int=Form(...),capacity: float=Form(...),duration_minutes: int=Form(...),tip: int=Form(0),enabled: bool=Form(False)):
+    require_admin(request); clean=' '.join(name.split())
+    if len(clean)<2 or min(required_level,capacity,duration_minutes)<1 or tip<0: raise HTTPException(400,'Enter valid rider details.')
+    with connection() as db:
+        result=db.execute('UPDATE delivery_riders SET name=?,icon=?,required_level=?,capacity=?,duration_seconds=?,tip=?,enabled=? WHERE rider_key=?',(clean,icon.strip()[:12] or '🛵',required_level,capacity,duration_minutes*60,tip,1 if enabled else 0,rider_key))
+        if not result.rowcount: raise HTTPException(404,'Rider not found.')
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/riders/{rider_key}/delete')
+def admin_rider_delete(request: Request,rider_key: str):
+    require_admin(request)
+    with connection() as db:
+        used=db.execute('SELECT 1 FROM vendor_deliveries WHERE rider_key=? LIMIT 1',(rider_key,)).fetchone()
+        if used: db.execute('UPDATE delivery_riders SET enabled=0 WHERE rider_key=?',(rider_key,))
+        elif not db.execute('DELETE FROM delivery_riders WHERE rider_key=?',(rider_key,)).rowcount: raise HTTPException(404,'Rider not found.')
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/vendor-orders/create')
+def admin_vendor_order_create(request: Request,vendor_key: str=Form(...),name: str=Form(...),product_key: str=Form(...),quantity: int=Form(...),reward: int=Form(...),required_level: int=Form(...)):
+    require_admin(request); clean=' '.join(name.split())
+    if len(clean)<2 or min(quantity,reward,required_level)<1: raise HTTPException(400,'Enter valid order details.')
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM vendors WHERE vendor_key=?',(vendor_key,)).fetchone(): raise HTTPException(400,'Vendor not found.')
+        valid=db.execute("SELECT 1 FROM (SELECT product_key FROM species UNION SELECT product_key FROM fish_species UNION SELECT product_key FROM processing_products) WHERE product_key=?",(product_key,)).fetchone()
+        if not valid: raise HTTPException(400,'Choose a valid product.')
+        db.execute('INSERT INTO vendor_orders(vendor_key,name,product_key,quantity,reward,required_level) VALUES (?,?,?,?,?,?)',(vendor_key,clean,product_key,quantity,reward,required_level))
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/vendor-orders/{order_id}')
+def admin_vendor_order_edit(request: Request,order_id: int,vendor_key: str=Form(...),name: str=Form(...),product_key: str=Form(...),quantity: int=Form(...),reward: int=Form(...),required_level: int=Form(...),enabled: bool=Form(False)):
+    require_admin(request); clean=' '.join(name.split())
+    if len(clean)<2 or min(quantity,reward,required_level)<1: raise HTTPException(400,'Enter valid order details.')
+    with connection() as db:
+        if not db.execute('SELECT 1 FROM vendors WHERE vendor_key=?',(vendor_key,)).fetchone(): raise HTTPException(400,'Vendor not found.')
+        valid=db.execute("SELECT 1 FROM (SELECT product_key FROM species UNION SELECT product_key FROM fish_species UNION SELECT product_key FROM processing_products) WHERE product_key=?",(product_key,)).fetchone()
+        if not valid: raise HTTPException(400,'Choose a valid product.')
+        result=db.execute('UPDATE vendor_orders SET vendor_key=?,name=?,product_key=?,quantity=?,reward=?,required_level=?,enabled=? WHERE id=?',(vendor_key,clean,product_key,quantity,reward,required_level,1 if enabled else 0,order_id))
+        if not result.rowcount: raise HTTPException(404,'Vendor order not found.')
+    return RedirectResponse('/admin#vendors',303)
+
+@app.post('/admin/vendor-orders/{order_id}/delete')
+def admin_vendor_order_delete(request: Request,order_id: int):
+    require_admin(request)
+    with connection() as db:
+        used=db.execute('SELECT 1 FROM vendor_deliveries WHERE order_id=? LIMIT 1',(order_id,)).fetchone()
+        if used: db.execute('UPDATE vendor_orders SET enabled=0 WHERE id=?',(order_id,))
+        elif not db.execute('DELETE FROM vendor_orders WHERE id=?',(order_id,)).rowcount: raise HTTPException(404,'Vendor order not found.')
+    return RedirectResponse('/admin#vendors',303)
 
 
 @app.post("/admin/fish/pond-limits/{player_level}")

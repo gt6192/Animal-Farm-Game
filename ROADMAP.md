@@ -161,7 +161,7 @@ Fishery cards and the seed marketplace show the configured fish sale value. Inve
 
 Fixed inventory valuation for existing animal-product rows, restoring the main dashboard for inventories created before the sellable-stock summary.
 
-## v4.0 — Farm Reputation Network (planned)
+## v4.0 — Farm Reputation Network (in progress)
 
 Turn surplus stock into a strategic resource through local partners rather than another generic sell button. Farmers can supply local organizations directly from inventory while a transport vehicle or processing slot is busy.
 
@@ -191,3 +191,18 @@ Turn surplus stock into a strategic resource through local partners rather than 
 - A dedicated Local Partners panel shows available orders, required stock, completion readiness, reward, expiry, and reputation progress.
 - Orders clearly distinguish instant local settlement from vehicle-based market delivery.
 - Existing inventory, transport, processing, Farmies ledger, XP, user isolation, and catalog data remain intact.
+
+### Vendor map and delivery riders
+
+- Add a lightweight Farm Map page with a clear map-like layout of local vendors. It is an operational view, not a graphics-heavy game screen.
+- Admins can create, edit, enable, archive, and position vendors; configure vendor name, icon, category, player-level requirement, available order templates, and delivery settings.
+- Vendors receive completed local-partner orders through delivery riders. Exact order stock is reserved and then deducted only once when a delivery begins; settlement occurs once the delivery reaches its scheduled completion time.
+- Delivery riders are a player-owned roster. Rider unlock level, name, icon, delivery capacity, and delivery duration are admin-configurable.
+- A player may use only an unlocked and idle rider. Each rider handles one vendor delivery at a time; higher player levels unlock additional riders so several vendor deliveries can run in parallel.
+- Each completed rider delivery includes an admin-configured tip. The default v4 interpretation is that this is a delivery cost deducted from the vendor order payout and recorded separately in the Farmies ledger. Admins may set it to zero.
+- Admins can configure default and per-vendor delivery durations, delivery tips, and rider capacity. Active deliveries snapshot those economics and timing values, so later catalog edits do not change work already in progress.
+- The map shows vendor availability, order readiness, assigned rider, countdown, reward, tip, and resulting net Farmies before the player starts a delivery.
+
+### v4.0.0 — Vendor Map & delivery riders
+
+Implemented the first v4 stage: a lightweight Vendor Map, editable vendor catalog, editable local order catalog, and editable delivery-rider catalog. Riders unlock by player level, have configurable capacity, duration, and per-delivery tip, and can work in parallel when unlocked. Orders reserve stock at departure, settle exactly once after the server-timed journey, and record the net reward in the Farmies ledger. Levels 3–10 are seeded for progression configuration.
