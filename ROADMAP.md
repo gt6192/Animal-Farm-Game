@@ -160,3 +160,34 @@ Fishery cards and the seed marketplace show the configured fish sale value. Inve
 ### v3.2.6
 
 Fixed inventory valuation for existing animal-product rows, restoring the main dashboard for inventories created before the sellable-stock summary.
+
+## v4.0 — Farm Reputation Network (planned)
+
+Turn surplus stock into a strategic resource through local partners rather than another generic sell button. Farmers can supply local organizations directly from inventory while a transport vehicle or processing slot is busy.
+
+### Partners and orders
+
+- Configurable partners such as a school kitchen, bakery, cheese shop, wool mill, and fish café.
+- Each partner has a player-specific reputation level, order history, and optional unlock level.
+- Partners publish time-limited, mixed-item orders: for example, eggs plus goat milk for a school kitchen, or fish plus cartons for a café.
+- Fulfilling an order deducts only the exact requested inventory items and settles Farmies immediately without requiring transport.
+- Local orders pay less than the main market and do not replace transport sales; transport remains the highest immediate sale route and continues to grant sales XP.
+
+### Reputation progression
+
+- Successful orders increase only that partner's reputation.
+- Higher reputation unlocks larger orders, better local prices, recurring contracts, and partner-specific benefits.
+- Ignoring an expired order may reduce reputation modestly; no stock is ever removed automatically.
+- All settlements, reputation changes, expiry handling, and rewards are immutable and idempotent.
+
+### Administration
+
+- Admins can create, edit, enable, archive, and order local partners.
+- Admins configure reputation thresholds, order templates, product quantities, Farmies rewards, expiry durations, recurrence, player-level requirements, and reputation effects.
+- Admins can review per-user partner reputation, completed orders, and settlement ledger entries, with manual adjustments requiring a reason.
+
+### Player experience
+
+- A dedicated Local Partners panel shows available orders, required stock, completion readiness, reward, expiry, and reputation progress.
+- Orders clearly distinguish instant local settlement from vehicle-based market delivery.
+- Existing inventory, transport, processing, Farmies ledger, XP, user isolation, and catalog data remain intact.
